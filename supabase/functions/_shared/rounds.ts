@@ -8,18 +8,19 @@
 export type CompetitionType = 'CUP' | 'LEAGUE'
 
 const STAGE_NAMES: Record<string, { name: string; sortOrder: number }> = {
-  GROUP_STAGE:           { name: 'Group Stage',     sortOrder: 1 },
   PRELIMINARY_ROUND:     { name: 'Preliminary',     sortOrder: 0 },
+  PLAY_OFF_ROUND:        { name: 'Play-off',        sortOrder: 0 },
+  PLAY_OFF_ROUND_FINALS: { name: 'Play-off Final',  sortOrder: 0 },
+  GROUP_STAGE:           { name: 'Group Stage',     sortOrder: 1 },
   ROUND_1:               { name: 'Round 1',         sortOrder: 1 },
   ROUND_2:               { name: 'Round 2',         sortOrder: 2 },
-  PLAY_OFF_ROUND:        { name: 'Play-off',        sortOrder: 1 },
-  PLAY_OFF_ROUND_FINALS: { name: 'Play-off Final',  sortOrder: 2 },
-  LAST_16:               { name: 'Round of 16',     sortOrder: 2 },
-  ROUND_OF_16:           { name: 'Round of 16',     sortOrder: 2 },
-  QUARTER_FINALS:        { name: 'Quarter Finals',  sortOrder: 3 },
-  SEMI_FINALS:           { name: 'Semi Finals',     sortOrder: 4 },
-  THIRD_PLACE:           { name: 'Third Place',     sortOrder: 5 },
-  FINAL:                 { name: 'Final',           sortOrder: 6 },
+  LAST_32:               { name: 'Last 32',         sortOrder: 2 }, // 48-team WC adds this knockout round
+  LAST_16:               { name: 'Round of 16',     sortOrder: 3 },
+  ROUND_OF_16:           { name: 'Round of 16',     sortOrder: 3 },
+  QUARTER_FINALS:        { name: 'Quarter Finals',  sortOrder: 4 },
+  SEMI_FINALS:           { name: 'Semi Finals',     sortOrder: 5 },
+  THIRD_PLACE:           { name: 'Third Place',     sortOrder: 6 },
+  FINAL:                 { name: 'Final',           sortOrder: 7 },
 }
 
 export type RoundDescriptor = { name: string; sortOrder: number }
