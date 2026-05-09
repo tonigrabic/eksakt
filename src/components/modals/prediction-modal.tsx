@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card } from '@/components/ui/card'
-import { Minus, Plus, Trophy, Zap, Check } from 'lucide-react'
+import { AlertCircle, Minus, Plus, Trophy, Zap, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePredictionContext } from '@/hooks/use-prediction-context'
 import {
@@ -217,30 +217,56 @@ function PredictionForm({
     }))
 
   const isSaving = submitPrediction.isPending || quickPredict.isPending
+  const [error, setError] = useState<string | null>(null)
+
+  // Re-check at submit time. The RLS policy guarantees correctness — no
+  // prediction ever lands after kickoff — but we want to surface a clean
+  // message instead of letting the raw "violates row-level security
+  // policy" string bubble up if the user sat on the form past kickoff.
+  const isLocked = () =>
+    new Date(context.match.kickoffTime).getTime() <= Date.now()
 
   const handleQuickSave = async () => {
-    await quickPredict.mutateAsync({
-      matchId,
-      homeScore: quickHome,
-      awayScore: quickAway,
-    })
-    onClose()
+    if (isLocked()) {
+      setError('This match has already started — predictions are locked.')
+      return
+    }
+    setError(null)
+    try {
+      await quickPredict.mutateAsync({
+        matchId,
+        homeScore: quickHome,
+        awayScore: quickAway,
+      })
+      onClose()
+    } catch (err) {
+      setError((err as Error).message)
+    }
   }
 
   const handlePerLeagueSave = async () => {
-    await Promise.all(
-      leagues.map((lg) => {
-        const draft = drafts[lg.leagueId]
-        return submitPrediction.mutateAsync({
-          matchId,
-          leagueId: lg.leagueId,
-          homeScore: draft.home,
-          awayScore: draft.away,
-          booster: draft.booster,
-        })
-      }),
-    )
-    onClose()
+    if (isLocked()) {
+      setError('This match has already started — predictions are locked.')
+      return
+    }
+    setError(null)
+    try {
+      await Promise.all(
+        leagues.map((lg) => {
+          const draft = drafts[lg.leagueId]
+          return submitPrediction.mutateAsync({
+            matchId,
+            leagueId: lg.leagueId,
+            homeScore: draft.home,
+            awayScore: draft.away,
+            booster: draft.booster,
+          })
+        }),
+      )
+      onClose()
+    } catch (err) {
+      setError((err as Error).message)
+    }
   }
 
   return (
@@ -283,6 +309,8 @@ function PredictionForm({
           </div>
         </div>
 
+        {error && <ErrorBanner message={error} />}
+
         <Button
           className="w-full"
           size="lg"
@@ -311,6 +339,8 @@ function PredictionForm({
           )
         })}
 
+        {error && <ErrorBanner message={error} />}
+
         <Button
           className="w-full"
           size="lg"
@@ -321,6 +351,15 @@ function PredictionForm({
         </Button>
       </TabsContent>
     </Tabs>
+  )
+}
+
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div className="flex items-start gap-2 rounded-md bg-destructive/10 border border-destructive/30 p-2.5 text-xs text-destructive">
+      <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+      <span>{message}</span>
+    </div>
   )
 }
 

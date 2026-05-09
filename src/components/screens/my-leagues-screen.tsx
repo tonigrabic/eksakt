@@ -3,9 +3,10 @@
 import Link from 'next/link'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Trophy, Users, Plus, Crown, ChevronRight } from 'lucide-react'
+import { Trophy, Users, Crown, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ScreenHeader } from '@/components/screen-header'
+import { CreateOrJoinLeague } from '@/components/create-or-join-league'
 import { useMyLeagues } from '@/hooks/use-my-leagues'
 import { formatKickoff } from '@/lib/format'
 import type { MyLeagueCard } from '@/types'
@@ -15,12 +16,7 @@ export function MyLeaguesScreen() {
 
   return (
     <>
-      <div className="border-b border-border bg-card">
-        <div className="max-w-2xl mx-auto px-4 py-4">
-          <h1 className="text-2xl font-bold text-foreground">{'My Leagues'}</h1>
-          <p className="text-sm text-muted-foreground">{'Manage your competitions'}</p>
-        </div>
-      </div>
+      <ScreenHeader title="My Leagues" subtitle="Manage your competitions" />
 
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
         {isLoading || !data ? (
@@ -33,15 +29,10 @@ export function MyLeaguesScreen() {
               <StatCard label="Top 3 Finishes" value={data.stats.topThreeFinishes} icon={Crown} />
             </div>
 
-            <Button className="w-full" size="lg" asChild>
-              <Link href="/leagues/create">
-                <Plus className="h-5 w-5 mr-2" />
-                {'Create New League'}
-              </Link>
-            </Button>
+            <CreateOrJoinLeague />
 
             <div className="space-y-3">
-              <h2 className="text-lg font-bold text-foreground">{'Active Leagues'}</h2>
+              <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{'Active Leagues'}</h2>
               {data.active.length === 0 ? (
                 <p className="text-xs text-muted-foreground">{'None yet.'}</p>
               ) : (
@@ -53,7 +44,7 @@ export function MyLeaguesScreen() {
 
             {data.completed.length > 0 && (
               <div className="space-y-3">
-                <h2 className="text-lg font-bold text-foreground">{'Completed'}</h2>
+                <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{'Completed'}</h2>
                 {data.completed.map((card) => (
                   <CompletedLeagueRow key={card.league.id} card={card} />
                 ))}

@@ -46,6 +46,24 @@ export function computePredictionPoints(
   })
 }
 
+// ── Match-state helpers ─────────────────────────────────────────────────────
+
+/**
+ * A match is "upcoming and predictable" only if its status is still
+ * 'scheduled' AND its kickoff_time hasn't passed. The two conditions are
+ * intentionally redundant — between kickoff and the next sync-live tick
+ * a match can sit in a zombie state where status is stale; treating it
+ * as predictable would surface an avoidable RLS error on submit, since
+ * the predictions_*_pre_kickoff policies enforce kickoff_time > now() at
+ * the DB level.
+ *
+ * Use this everywhere upcoming matches are displayed or filtered.
+ */
+export function isUpcomingPredictable(match: Match, now: number = Date.now()): boolean {
+  if (match.status !== 'scheduled') return false
+  return new Date(match.kickoffTime).getTime() > now
+}
+
 // ── Boosters ────────────────────────────────────────────────────────────────
 
 export function boosterUsage(
@@ -264,6 +282,20 @@ function explainPoints(pts: PointsBreakdown): string {
 
 // ── League utilities ────────────────────────────────────────────────────────
 
-export function isCompetitionFinished(league: Pick<League, 'competition'>): boolean {
-  return new Date(league.competition.seasonEnd).getTime() < Date.now()
+/**
+ * A multi-comp league is finished only when every linked competition has
+ * ended. While any one is still going, the league is active.
+ *
+ * Empty `competitions` (shouldn't happen — leagues require ≥1 link at
+ * creation) defensively returns false: better to keep an orphan league
+ * visible than to silently hide it.
+ */
+export function isLeagueFinished(
+  league: Pick<League, 'competitions'>,
+): boolean {
+  if (league.competitions.length === 0) return false
+  const now = Date.now()
+  return league.competitions.every(
+    (lc) => new Date(lc.competition.seasonEnd).getTime() < now,
+  )
 }

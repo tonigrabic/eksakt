@@ -82,7 +82,8 @@ Individual football matches.
 | updated_at | timestamptz | default `now()`, maintained by trigger |
 
 ### leagues
-User-created prediction leagues.
+User-created prediction leagues. A league no longer points at a single
+competition — see `league_competitions` for the many-to-many.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -91,7 +92,6 @@ User-created prediction leagues.
 | description | text | nullable |
 | invite_code | text | NOT NULL UNIQUE, length 4-12 |
 | icon | text | nullable — emoji or short label, falls back to trophy in UI |
-| competition_id | uuid | FK → competitions ON DELETE RESTRICT |
 | created_by | uuid | FK → profiles ON DELETE RESTRICT |
 | settings | jsonb | NOT NULL default — see shape below |
 | created_at | timestamptz | default `now()` |
@@ -108,6 +108,39 @@ User-created prediction leagues.
 The flat-object pool shape matches `BoosterCounts` in `src/types`. Indexed
 JSON paths (e.g. `settings -> 'boosters' -> 'enabled'`) work without
 contortions.
+
+### league_competitions
+Many-to-many: which real-world competitions a league auto-follows. New
+matches synced into a linked competition automatically flow into the
+league. Each link carries a `start_date` cutoff so matches kicking off
+before that timestamp are excluded — fair to mid-season joiners.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid | PK |
+| league_id | uuid | FK → leagues ON DELETE CASCADE |
+| competition_id | uuid | FK → competitions ON DELETE RESTRICT |
+| start_date | timestamptz | NOT NULL, default `now()` |
+| added_by | uuid | FK → profiles ON DELETE SET NULL, nullable |
+| added_at | timestamptz | default `now()` |
+
+UNIQUE on `(league_id, competition_id)`.
+
+### league_matches
+Explicit, hand-picked matches. Reserved for the future "quick league" UI
+(a single-night league cherry-picking matches across competitions). Empty
+in v1 — the table is here so adding the wizard later requires no
+migration.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid | PK |
+| league_id | uuid | FK → leagues ON DELETE CASCADE |
+| match_id | uuid | FK → matches ON DELETE CASCADE |
+| added_by | uuid | FK → profiles ON DELETE SET NULL, nullable |
+| added_at | timestamptz | default `now()` |
+
+UNIQUE on `(league_id, match_id)`.
 
 ### league_members
 Many-to-many: users in leagues.
@@ -166,7 +199,9 @@ Beyond the implicit indexes on PKs and UNIQUE constraints:
 | competitions | `(season_end)` |
 | rounds | `(competition_id)` |
 | matches | `(competition_id)`, `(kickoff_time)`, `(status)` |
-| leagues | `(competition_id)`, `(created_by)` |
+| leagues | `(created_by)` |
+| league_competitions | `(league_id)`, `(competition_id)` |
+| league_matches | `(league_id)` |
 | league_members | `(league_id)`, `(user_id)` |
 | predictions | `(match_id, league_id)`, `(user_id)` |
 
@@ -178,6 +213,14 @@ Beyond the implicit indexes on PKs and UNIQUE constraints:
   on `league_members`.
 - `match_has_kicked_off(p_match_id uuid) returns boolean` — `SECURITY DEFINER`,
   used by predictions RLS to enforce blind predictions.
+- `league_match_ids(p_league_id uuid) returns table(match_id uuid)` —
+  `SECURITY DEFINER`, returns the union of "matches in linked
+  competitions from start_date onward" + "explicit league_matches picks".
+  Single chokepoint for "what matches belong to a league?". Used by both
+  the predictions INSERT policy and the `get_league_matches` RPC.
+- `get_league_matches(p_league_id uuid) returns setof matches` —
+  `SECURITY DEFINER` convenience wrapper that returns the actual match
+  rows so PostgREST can chain `.select(...)` for join embeds.
 
 ### Trigger functions
 - `handle_new_user()` — fires on `auth.users` INSERT, creates the matching
@@ -199,15 +242,21 @@ Beyond the implicit indexes on PKs and UNIQUE constraints:
 | competitions | SELECT all | public read |
 | rounds | SELECT all | public read |
 | matches | SELECT all | public read |
-| leagues | SELECT member | only league members |
+| leagues | SELECT member | only league members (or creator, defensive) |
 | leagues | INSERT authed | `auth.uid() = created_by` |
 | leagues | UPDATE admin | only league admins |
+| league_competitions | SELECT member | only league members |
+| league_competitions | INSERT admin | only league admins |
+| league_competitions | DELETE admin | only league admins (no UI in v1) |
+| league_matches | SELECT member | only league members |
+| league_matches | INSERT admin | only league admins |
+| league_matches | DELETE admin | only league admins |
 | league_members | SELECT member | members can see other members |
 | league_members | INSERT self | `auth.uid() = user_id` (join) |
 | league_members | DELETE self | `auth.uid() = user_id` (leave) |
 | predictions | SELECT own | always |
 | predictions | SELECT post-kickoff | other members' picks visible after kickoff |
-| predictions | INSERT pre-kickoff | own pick, before `kickoff_time` |
+| predictions | INSERT pre-kickoff | own pick, before `kickoff_time`, AND match in `league_match_ids(league_id)` |
 | predictions | UPDATE pre-kickoff | own pick, before `kickoff_time` |
 | points | SELECT member | visible to league members |
 
@@ -222,14 +271,23 @@ the audit trail.
 ## Entity Relationships
 
 ```
-profiles 1──M league_members M──1 leagues ──1 competitions ──M rounds ──M matches
-         1──M predictions                                                 │   │
-                                                                    home_team away_team
-                                                                          │   │
-                                                                        teams ─┘
+profiles 1──M league_members M──1 leagues
+                                    │
+                                    │ 1──M league_competitions M──1 competitions ──M rounds ──M matches
+                                    │                                                              │   │
+                                    │ 1──M league_matches      M──1 matches                  home_team away_team
+                                    │                                                              │   │
+profiles 1──M predictions                                                                       teams ─┘
 
 predictions 1──1 points
 predictions M──1 matches
 predictions M──1 leagues
 predictions M──1 profiles
 ```
+
+A league's effective match set is the UNION of:
+- every match in `league_competitions` whose `kickoff_time >= start_date`
+- every match listed in `league_matches`
+
+Use the `league_match_ids(league_id)` function to compute it; never
+reimplement.

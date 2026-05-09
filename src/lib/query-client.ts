@@ -21,6 +21,7 @@ export function getQueryClient() {
 
 // Centralized cache keys — typed so renames are safe.
 export const queryKeys = {
+  currentUser: ['current-user'] as const,
   dashboard: ['dashboard'] as const,
   myLeagues: ['my-leagues'] as const,
   leagueDetail: (leagueId: string) => ['league-detail', leagueId] as const,

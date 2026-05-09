@@ -6,6 +6,7 @@ import type {
   BoosterPoolConfig,
   Competition,
   League,
+  LeagueCompetitionLink,
   LeagueMember,
   LeagueSettings,
   Match,
@@ -53,7 +54,7 @@ export function rowToCompetition(
 
 export function rowToCompetitionLite(
   row: Tables['competitions']['Row'],
-): League['competition'] {
+): LeagueCompetitionLink['competition'] {
   return {
     id: row.id,
     name: row.name,
@@ -114,21 +115,39 @@ export function rowToPrediction(
   }
 }
 
-type LeagueWithJoins = Tables['leagues']['Row'] & {
+type LeagueCompetitionWithJoin = Pick<
+  Tables['league_competitions']['Row'],
+  'start_date'
+> & {
   competition: Tables['competitions']['Row']
+}
+
+type LeagueWithJoins = Tables['leagues']['Row'] & {
+  league_competitions: LeagueCompetitionWithJoin[]
 }
 
 export function rowToLeague(
   row: LeagueWithJoins,
   memberCount: number,
 ): League {
+  // Sort by start_date so the "primary" comp (oldest link) renders first
+  // in headers/cards. PostgREST doesn't guarantee join order otherwise.
+  const competitions = [...(row.league_competitions ?? [])]
+    .sort((a, b) => a.start_date.localeCompare(b.start_date))
+    .map(
+      (lc): LeagueCompetitionLink => ({
+        competition: rowToCompetitionLite(lc.competition),
+        startDate: lc.start_date,
+      }),
+    )
+
   return {
     id: row.id,
     name: row.name,
     description: row.description,
     inviteCode: row.invite_code,
     icon: row.icon,
-    competition: rowToCompetitionLite(row.competition),
+    competitions,
     createdBy: row.created_by,
     settings: parseSettings(row.settings),
     memberCount,

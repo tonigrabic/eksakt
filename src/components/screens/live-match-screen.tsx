@@ -18,7 +18,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { useMatch } from '@/hooks/use-match'
-import { pointsTier } from '@/lib/format'
+import { displayLiveMinute, pointsTier } from '@/lib/format'
 import type {
   BestScoreSuggestion,
   PredictionWithDetails,
@@ -75,7 +75,7 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
             {match.status === 'live' ? (
               <Badge variant="destructive" className="gap-1 text-xs">
                 <Circle className="h-1.5 w-1.5 fill-current animate-pulse" />
-                {match.liveMinute}
+                {displayLiveMinute(match.liveMinute, match.status, match.kickoffTime) ?? 'LIVE'}
               </Badge>
             ) : match.status === 'finished' ? (
               <Badge variant="secondary" className="text-xs">{'Full Time'}</Badge>

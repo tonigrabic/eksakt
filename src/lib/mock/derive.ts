@@ -218,7 +218,9 @@ function matchesForLeague(leagueId: UUID): {
   upcoming: Match[]
   completed: Match[]
 } {
-  const competitionId = leagues[leagueId].competition.id
+  // Mock leagues link to exactly one competition, so the "primary" link
+  // is the only link. Real multi-comp leagues would iterate.
+  const competitionId = leagues[leagueId].competitions[0].competition.id
   const all = Object.values(allMatches).filter(
     (m) => m.competitionId === competitionId,
   )
@@ -335,8 +337,13 @@ export function buildLeagueDetail(
 
   const { live, upcoming, completed } = matchesForLeague(leagueId)
 
+  const isAdmin = (leagueMembers[leagueId] ?? []).some(
+    (m) => m.userId === userId && m.role === 'admin',
+  )
+
   return {
     league,
+    isAdmin,
     standings: computeStandings(leagueId),
     liveMatches: live.map((m) => liveMatchSummary(m, leagueId, userId)),
     upcomingMatches: upcoming.map((m) => upcomingMatchSummary(m, leagueId, userId)),
@@ -391,7 +398,13 @@ export function buildPredictionContext(
   const contexts: LeaguePredictionContext[] = []
   for (const leagueId of userLeagueIds) {
     const league = leagues[leagueId]
-    if (league.competition.id !== match.competitionId) continue
+    if (
+      !league.competitions.some(
+        (lc) => lc.competition.id === match.competitionId,
+      )
+    ) {
+      continue
+    }
     if (isCompetitionFinished(league)) continue
 
     const standings = computeStandings(leagueId)
@@ -482,7 +495,11 @@ function explainPoints(pts: PointsBreakdown): string {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function isCompetitionFinished(league: League): boolean {
-  return new Date(league.competition.seasonEnd).getTime() < Date.now()
+  if (league.competitions.length === 0) return false
+  const now = Date.now()
+  return league.competitions.every(
+    (lc) => new Date(lc.competition.seasonEnd).getTime() < now,
+  )
 }
 
 export { boosterMultiplier }

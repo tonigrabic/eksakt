@@ -9,19 +9,14 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { ArrowLeft, Trophy, Copy, Check, Zap } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { useCompetitions } from '@/hooks/use-competitions'
 import { useCreateLeague } from '@/hooks/use-create-league'
 import {
   type Booster,
   type BoosterCounts,
+  type Competition,
   MAX_BOOSTER_POOL_PER_TYPE,
 } from '@/types'
 
@@ -37,7 +32,7 @@ export function CreateLeagueScreen() {
   const createLeague = useCreateLeague()
 
   const [leagueName, setLeagueName] = useState('')
-  const [competitionId, setCompetitionId] = useState('')
+  const [competitionIds, setCompetitionIds] = useState<string[]>([])
   const [description, setDescription] = useState('')
   const [boostersEnabled, setBoostersEnabled] = useState(true)
   const [boosterPool, setBoosterPool] = useState<BoosterCounts>({
@@ -55,14 +50,21 @@ export function CreateLeagueScreen() {
     }))
   }
 
-  const selectedCompetition = competitions?.find((c) => c.id === competitionId)
+  const toggleCompetition = (id: string) => {
+    setCompetitionIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    )
+  }
+
+  const selectedCompetitions =
+    competitions?.filter((c) => competitionIds.includes(c.id)) ?? []
 
   const handleCreate = async () => {
-    if (!competitionId) return
+    if (competitionIds.length === 0) return
     const result = await createLeague.mutateAsync({
       name: leagueName,
       description: description || null,
-      competitionId,
+      competitionIds,
       icon: null,
       settings: {
         boosters: { enabled: boostersEnabled, pool: boosterPool },
@@ -122,10 +124,16 @@ export function CreateLeagueScreen() {
                   <span>{'Name:'}</span>
                   <span className="font-medium text-foreground">{leagueName}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>{'Competition:'}</span>
-                  <span className="font-medium text-foreground">
-                    {selectedCompetition?.name ?? competitionId}
+                <div className="flex justify-between gap-3">
+                  <span>
+                    {selectedCompetitions.length === 1
+                      ? 'Competition:'
+                      : 'Competitions:'}
+                  </span>
+                  <span className="font-medium text-foreground text-right">
+                    {selectedCompetitions.length === 0
+                      ? '—'
+                      : selectedCompetitions.map((c) => c.name).join(', ')}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -198,23 +206,18 @@ export function CreateLeagueScreen() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="competition" className="text-sm font-medium text-foreground">
-              {'Select Competition'} <span className="text-destructive">{'*'}</span>
+            <Label className="text-sm font-medium text-foreground">
+              {'Select Competitions'} <span className="text-destructive">{'*'}</span>
             </Label>
-            <Select value={competitionId} onValueChange={setCompetitionId}>
-              <SelectTrigger id="competition" className="bg-background">
-                <SelectValue
-                  placeholder={compsLoading ? 'Loading…' : 'Choose a competition'}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {(competitions ?? []).map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <p className="text-xs text-muted-foreground">
+              {'Pick one or more. Your league tracks every match in the chosen competitions.'}
+            </p>
+            <CompetitionPicker
+              competitions={competitions ?? []}
+              loading={compsLoading}
+              selectedIds={competitionIds}
+              onToggle={toggleCompetition}
+            />
           </div>
 
           <div className="space-y-2">
@@ -282,7 +285,7 @@ export function CreateLeagueScreen() {
             onClick={handleCreate}
             disabled={
               !leagueName ||
-              !competitionId ||
+              competitionIds.length === 0 ||
               createLeague.isPending
             }
           >
@@ -290,6 +293,73 @@ export function CreateLeagueScreen() {
           </Button>
         </Card>
       </div>
+    </div>
+  )
+}
+
+function CompetitionPicker({
+  competitions,
+  loading,
+  selectedIds,
+  onToggle,
+}: {
+  competitions: Competition[]
+  loading: boolean
+  selectedIds: string[]
+  onToggle: (id: string) => void
+}) {
+  if (loading) {
+    return (
+      <div className="rounded-lg border border-border bg-background p-4 text-sm text-muted-foreground">
+        {'Loading competitions…'}
+      </div>
+    )
+  }
+  if (competitions.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-background p-4 text-sm text-muted-foreground">
+        {'No competitions available right now.'}
+      </div>
+    )
+  }
+  return (
+    <div className="rounded-lg border border-border bg-background divide-y divide-border/40 overflow-hidden">
+      {competitions.map((c) => {
+        const checked = selectedIds.includes(c.id)
+        return (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => onToggle(c.id)}
+            aria-pressed={checked}
+            className={cn(
+              'w-full flex items-center gap-3 p-3 text-left transition-colors',
+              'hover:bg-muted/40',
+              checked && 'bg-primary/5',
+            )}
+          >
+            <span
+              className={cn(
+                'flex h-5 w-5 items-center justify-center rounded border flex-shrink-0',
+                checked
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-muted-foreground/40 bg-background',
+              )}
+            >
+              {checked && <Check className="h-3.5 w-3.5" />}
+            </span>
+            <div className="h-7 w-7 rounded bg-muted flex items-center justify-center flex-shrink-0">
+              <Trophy className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium text-foreground truncate">
+                {c.name}
+              </div>
+              <div className="text-xs text-muted-foreground">{c.code}</div>
+            </div>
+          </button>
+        )
+      })}
     </div>
   )
 }

@@ -19,12 +19,14 @@ import {
   buildBestScores,
   completedMatchSummary,
   computeStandings,
-  isCompetitionFinished,
+  isLeagueFinished,
+  isUpcomingPredictable,
   liveMatchSummary,
   upcomingMatchSummary,
 } from '@/lib/derive'
 import { computePoints, computeRarity } from '@/lib/scoring'
 import type {
+  AddLeagueCompetitionInput,
   Competition,
   CreateLeagueInput,
   CreateLeagueResult,
@@ -44,6 +46,8 @@ import type {
   QuickPredictInput,
   StandingRow,
   SubmitPredictionInput,
+  UpdateLeagueInput,
+  UpdateProfileInput,
   UUID,
 } from '@/types'
 
@@ -58,9 +62,16 @@ const MATCH_SELECT = `
   away_team:teams!matches_away_team_id_fkey(*)
 `
 
+// Pulls the league row plus its multi-comp links. Each link carries the
+// start_date cutoff so the UI can render "tracking PL since May 9" if we
+// ever want to. The join order isn't guaranteed by PostgREST — mappers
+// sort by start_date.
 const LEAGUE_SELECT = `
   *,
-  competition:competitions(*)
+  league_competitions(
+    start_date,
+    competition:competitions(*)
+  )
 `
 
 // ── Auth ────────────────────────────────────────────────────────────────────
@@ -127,17 +138,28 @@ async function fetchLeagueWithCounts(
   return { league, members }
 }
 
-async function fetchMatchesForCompetition(
-  competitionId: UUID,
-): Promise<Match[]> {
+/**
+ * Fetch the league's effective match set via the get_league_matches RPC.
+ * The function returns SETOF matches, so PostgREST treats it like a table
+ * query and we can chain the same MATCH_SELECT to embed teams + round.
+ *
+ * This is the single chokepoint for "what matches belong to this league?"
+ * — replaces the old fetchMatchesForCompetition. Honors per-link
+ * start_date cutoffs and any explicit league_matches picks.
+ */
+async function fetchMatchesForLeague(leagueId: UUID): Promise<Match[]> {
   const supabase = createClient()
+  // PostgREST chains `.select(...)` onto a SETOF-table RPC at runtime to
+  // embed FK joins, but the generated types don't model embeds on RPC
+  // results. Cast through `unknown` to MatchWithJoins — the shape is
+  // guaranteed by MATCH_SELECT.
   const { data, error } = await supabase
-    .from('matches')
+    .rpc('get_league_matches', { p_league_id: leagueId })
     .select(MATCH_SELECT)
-    .eq('competition_id', competitionId)
     .order('kickoff_time', { ascending: true })
   if (error) throw error
-  return (data ?? []).map((r) => rowToMatch(r as Parameters<typeof rowToMatch>[0]))
+  const rows = (data ?? []) as unknown as Parameters<typeof rowToMatch>[0][]
+  return rows.map(rowToMatch)
 }
 
 async function fetchPredictionsForLeague(
@@ -171,9 +193,10 @@ export async function getDashboard(): Promise<LeagueDashboardSummary[]> {
   for (const row of memberRows ?? []) {
     const leagueRow = row.league as unknown as Parameters<typeof rowToLeague>[0]
     if (!leagueRow) continue
-    if (isCompetitionFinished({ competition: { seasonEnd: leagueRow.competition.season_end } as League['competition'] })) {
-      continue
-    }
+    // Map first so we can apply the multi-comp "all linked comps over"
+    // semantic via the shared helper. Member count is irrelevant here.
+    const lite = rowToLeague(leagueRow, 0)
+    if (isLeagueFinished(lite)) continue
 
     const summary = await buildLeagueDashboardSummary(leagueRow.id, userId)
     if (summary) summaries.push(summary)
@@ -186,7 +209,7 @@ async function buildLeagueDashboardSummary(
   userId: UUID,
 ): Promise<LeagueDashboardSummary | null> {
   const { league, members } = await fetchLeagueWithCounts(leagueId)
-  const matches = await fetchMatchesForCompetition(league.competition.id)
+  const matches = await fetchMatchesForLeague(leagueId)
   const predictions = await fetchPredictionsForLeague(leagueId)
 
   const standings = computeStandings({
@@ -211,7 +234,7 @@ async function buildLeagueDashboardSummary(
     )
 
   const upcomingMatches = matches
-    .filter((m) => m.status === 'scheduled')
+    .filter(isUpcomingPredictable)
     .sort((a, b) => a.kickoffTime.localeCompare(b.kickoffTime))
     .map((match) =>
       upcomingMatchSummary({
@@ -259,7 +282,7 @@ export async function getMyLeagues(): Promise<MyLeaguesPayload> {
     if (!leagueRow) continue
 
     const { league, members } = await fetchLeagueWithCounts(leagueRow.id)
-    const matches = await fetchMatchesForCompetition(league.competition.id)
+    const matches = await fetchMatchesForLeague(leagueRow.id)
     const predictions = await fetchPredictionsForLeague(leagueRow.id)
 
     const standings = computeStandings({
@@ -274,10 +297,10 @@ export async function getMyLeagues(): Promise<MyLeaguesPayload> {
       (userRow?.totalPoints ?? 0) + (userRow?.matchdayPoints ?? 0)
     const next =
       matches
-        .filter((m) => m.status === 'scheduled')
+        .filter(isUpcomingPredictable)
         .sort((a, b) => a.kickoffTime.localeCompare(b.kickoffTime))[0] ?? null
 
-    const completed = isCompetitionFinished(league)
+    const completed = isLeagueFinished(league)
     let finalBadge: MyLeagueCard['finalBadge'] = null
     if (completed) {
       if (userPosition === 1) finalBadge = '1st'
@@ -318,7 +341,7 @@ export async function getLeagueDetail(
   const { id: userId } = await requireUser()
 
   const { league, members } = await fetchLeagueWithCounts(leagueId)
-  const matches = await fetchMatchesForCompetition(league.competition.id)
+  const matches = await fetchMatchesForLeague(leagueId)
   const predictions = await fetchPredictionsForLeague(leagueId)
 
   const standings = computeStandings({
@@ -333,14 +356,19 @@ export async function getLeagueDetail(
     .filter((m) => m.status === 'live')
     .sort((a, b) => a.kickoffTime.localeCompare(b.kickoffTime))
   const upcoming = matches
-    .filter((m) => m.status === 'scheduled')
+    .filter(isUpcomingPredictable)
     .sort((a, b) => a.kickoffTime.localeCompare(b.kickoffTime))
   const finished = matches
     .filter((m) => m.status === 'finished')
     .sort((a, b) => b.kickoffTime.localeCompare(a.kickoffTime))
 
+  const isAdmin = members.some(
+    (m) => m.userId === userId && m.role === 'admin',
+  )
+
   return {
     league,
+    isAdmin,
     standings,
     liveMatches: live.map((match) =>
       liveMatchSummary({
@@ -401,9 +429,7 @@ export async function getMatchDetail(
   const predictions = (predRows ?? []).map(rowToPrediction)
 
   // For the standings tab, we need league-wide context.
-  const allLeagueMatches = await fetchMatchesForCompetition(
-    league.competition.id,
-  )
+  const allLeagueMatches = await fetchMatchesForLeague(leagueId)
   const allLeaguePredictions = await fetchPredictionsForLeague(leagueId)
   const standings = computeStandings({
     members,
@@ -478,17 +504,23 @@ export async function getPredictionContext(
   for (const row of memberRows ?? []) {
     const leagueRow = row.league as unknown as Parameters<typeof rowToLeague>[0]
     if (!leagueRow) continue
-    if (leagueRow.competition.id !== match.competitionId) continue
-    if (
-      isCompetitionFinished({
-        competition: { seasonEnd: leagueRow.competition.season_end } as League['competition'],
-      })
-    ) {
-      continue
-    }
+
+    // Two-step filter: a league must (1) link this match's competition
+    // and have its start_date earlier than the match kickoff, AND (2)
+    // not be entirely finished. Pre-filtering here avoids fetching
+    // matches/predictions for leagues that don't even include this match.
+    const lite = rowToLeague(leagueRow, 0)
+    const matchInLeague = lite.competitions.some(
+      (lc) =>
+        lc.competition.id === match.competitionId &&
+        new Date(match.kickoffTime).getTime() >=
+          new Date(lc.startDate).getTime(),
+    )
+    if (!matchInLeague) continue
+    if (isLeagueFinished(lite)) continue
 
     const { league, members } = await fetchLeagueWithCounts(leagueRow.id)
-    const matches = await fetchMatchesForCompetition(league.competition.id)
+    const matches = await fetchMatchesForLeague(leagueRow.id)
     const predictions = await fetchPredictionsForLeague(leagueRow.id)
 
     const standings = computeStandings({
@@ -572,7 +604,16 @@ export async function createLeague(
   const { id: userId } = await requireUser()
   const supabase = createClient()
 
+  if (input.competitionIds.length === 0) {
+    throw new Error('Pick at least one competition')
+  }
+
   const inviteCode = Math.random().toString(36).slice(2, 8).toUpperCase()
+
+  // Insert the league first. The leagues_auto_add_creator trigger
+  // inserts the creator as admin member in the same transaction, before
+  // RETURNING — so we have admin role for the league_competitions inserts
+  // below.
   const { data: leagueRow, error: lErr } = await supabase
     .from('leagues')
     .insert({
@@ -580,24 +621,38 @@ export async function createLeague(
       description: input.description,
       invite_code: inviteCode,
       icon: input.icon,
-      competition_id: input.competitionId,
       created_by: userId,
       settings: input.settings,
     })
-    .select(LEAGUE_SELECT)
+    .select('id')
     .single()
   if (lErr) throw lErr
 
-  // The creator is automatically the first member, with admin role.
-  const { error: mErr } = await supabase.from('league_members').insert({
-    league_id: leagueRow!.id,
-    user_id: userId,
-    role: 'admin',
-  })
-  if (mErr) throw mErr
+  // Bulk-insert the competition links. start_date defaults to now() so
+  // mid-season leagues start clean (no zero-point historical matches).
+  const { error: lcErr } = await supabase
+    .from('league_competitions')
+    .insert(
+      input.competitionIds.map((competition_id) => ({
+        league_id: leagueRow.id,
+        competition_id,
+        added_by: userId,
+      })),
+    )
+  if (lcErr) throw lcErr
+
+  // Re-fetch with the joined competitions so the caller gets a fully
+  // populated League domain object (including the comp emblems for the
+  // success screen).
+  const { data: fullRow, error: fErr } = await supabase
+    .from('leagues')
+    .select(LEAGUE_SELECT)
+    .eq('id', leagueRow.id)
+    .single()
+  if (fErr) throw fErr
 
   const league = rowToLeague(
-    leagueRow as Parameters<typeof rowToLeague>[0],
+    fullRow as Parameters<typeof rowToLeague>[0],
     1,
   )
   return {
@@ -606,9 +661,147 @@ export async function createLeague(
   }
 }
 
+/**
+ * Attach an additional competition to an existing league. Admin-only
+ * (RLS enforces). The new link's start_date defaults to now(), so only
+ * matches kicking off after this moment count — same fairness rule as
+ * creating a league mid-season.
+ */
+export async function addLeagueCompetition(
+  input: AddLeagueCompetitionInput,
+): Promise<void> {
+  const { id: userId } = await requireUser()
+  const supabase = createClient()
+  const { error } = await supabase.from('league_competitions').insert({
+    league_id: input.leagueId,
+    competition_id: input.competitionId,
+    added_by: userId,
+  })
+  if (error) throw error
+}
+
+/**
+ * Update league metadata. Restricted to admins via RLS
+ * (`leagues_update_admin` policy). Only fields explicitly passed are
+ * written — undefined = "leave alone", null on icon = "clear it".
+ */
+export async function updateLeague(
+  input: UpdateLeagueInput,
+): Promise<League> {
+  await requireUser()
+  const supabase = createClient()
+
+  const patch: Record<string, unknown> = {}
+  if (input.name !== undefined) patch.name = input.name
+  if (input.icon !== undefined) patch.icon = input.icon
+
+  if (Object.keys(patch).length === 0) {
+    // No fields to change — refetch and return current state.
+    const { league } = await fetchLeagueWithCounts(input.leagueId)
+    return league
+  }
+
+  const { error } = await supabase
+    .from('leagues')
+    .update(patch)
+    .eq('id', input.leagueId)
+  if (error) throw error
+
+  const { league } = await fetchLeagueWithCounts(input.leagueId)
+  return league
+}
+
+/**
+ * Join a league by its invite code. Calls the join_league_by_code RPC
+ * which atomically looks up the league + inserts the membership row,
+ * bypassing RLS on the lookup (you can't see leagues you're not in
+ * yet, by design).
+ *
+ * Idempotent — joining a league you're already in returns the same
+ * league cleanly. Throws "invite code not found" for unknown codes.
+ */
 export async function joinLeague(input: JoinLeagueInput): Promise<League> {
-  // Wire up when the /invite/[code] flow is implemented.
-  throw new Error(`Not implemented yet (invite ${input.inviteCode})`)
+  await requireUser()
+  const supabase = createClient()
+
+  const { data: leagueId, error: rpcErr } = await supabase.rpc(
+    'join_league_by_code',
+    { p_code: input.inviteCode },
+  )
+  if (rpcErr) {
+    if (rpcErr.code === 'P0002') {
+      throw new Error('Invite code not found. Check it and try again.')
+    }
+    throw rpcErr
+  }
+  if (!leagueId) {
+    throw new Error('Invite code not found. Check it and try again.')
+  }
+
+  // Fetch the now-joinable league row.
+  const { league } = await fetchLeagueWithCounts(leagueId)
+  return league
+}
+
+// ── Profile ─────────────────────────────────────────────────────────────────
+
+/**
+ * Update the current user's profile. Pass only the fields you want to
+ * change. RLS ensures the caller can only update their own row
+ * (`profiles_update_self` policy).
+ */
+export async function updateProfile(input: UpdateProfileInput): Promise<Profile> {
+  const { id: userId } = await requireUser()
+  const supabase = createClient()
+
+  const patch: { display_name?: string; avatar_url?: string | null } = {}
+  if (input.displayName !== undefined) patch.display_name = input.displayName
+  if (input.avatarUrl !== undefined) patch.avatar_url = input.avatarUrl
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .update(patch)
+    .eq('id', userId)
+    .select('*')
+    .single()
+  if (error) throw error
+  return rowToProfile(data)
+}
+
+/**
+ * Upload a new avatar image to Storage and return its public URL.
+ *
+ * Path: `<user_id>/<timestamp>.<ext>` — timestamp in the filename is the
+ * cache-buster. We don't bother deleting the previous file; orphans are
+ * cheap and a periodic cleanup job can reap them later.
+ *
+ * Storage RLS restricts writes to the caller's own folder, so even if a
+ * malicious client patched the path, the upload would be rejected.
+ */
+export async function uploadAvatar(file: File): Promise<string> {
+  const { id: userId } = await requireUser()
+  const supabase = createClient()
+
+  const ext = (file.name.split('.').pop() ?? 'jpg').toLowerCase()
+  const path = `${userId}/${Date.now()}.${ext}`
+
+  const { error: uploadError } = await supabase.storage
+    .from('avatars')
+    .upload(path, file, {
+      contentType: file.type,
+      cacheControl: '3600',
+      upsert: false,
+    })
+  if (uploadError) throw uploadError
+
+  const { data } = supabase.storage.from('avatars').getPublicUrl(path)
+  return data.publicUrl
+}
+
+export async function signOut(): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.auth.signOut()
+  if (error) throw error
 }
 
 // Re-export StandingRow so callers can introspect what computeStandings

@@ -14,8 +14,10 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePrediction } from '@/components/prediction-provider'
+import { ScreenHeader } from '@/components/screen-header'
+import { CreateOrJoinLeague } from '@/components/create-or-join-league'
 import { useDashboard } from '@/hooks/use-dashboard'
-import { positionLabel } from '@/lib/format'
+import { displayLiveMinute, positionLabel } from '@/lib/format'
 import type { LeagueDashboardSummary, LiveMatchSummary } from '@/types'
 
 export function DashboardScreen() {
@@ -24,16 +26,7 @@ export function DashboardScreen() {
 
   return (
     <>
-      <div className="border-b border-border bg-card">
-        <div className="max-w-2xl mx-auto px-4 pt-5 pb-4">
-          <h1 className="text-xl font-bold text-foreground tracking-tight">
-            {'Eksakt'}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {'Your leagues and live matches'}
-          </p>
-        </div>
-      </div>
+      <ScreenHeader title="Eksakt" subtitle="Your leagues and live matches" />
 
       <div className="max-w-2xl mx-auto px-4 py-4 space-y-4">
         {isLoading || !data ? (
@@ -42,12 +35,10 @@ export function DashboardScreen() {
           <Card className="p-8 text-center bg-card border-border">
             <Trophy className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
             <p className="text-sm font-semibold text-foreground">{'No active leagues yet'}</p>
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="text-xs text-muted-foreground mt-1 mb-4">
               {'Create one or join with an invite code to start predicting.'}
             </p>
-            <Button asChild className="mt-4">
-              <Link href="/leagues/create">{'Create League'}</Link>
-            </Button>
+            <CreateOrJoinLeague />
           </Card>
         ) : (
           data.map((summary) => (
@@ -185,7 +176,7 @@ function DashboardLiveMatchRow({
       )}
     >
       <span className="text-xs font-mono text-destructive font-semibold w-10 flex-shrink-0">
-        {match.liveMinute}
+        {displayLiveMinute(match.liveMinute, match.status, match.kickoffTime) ?? 'LIVE'}
       </span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between text-sm">

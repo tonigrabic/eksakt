@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -21,15 +21,23 @@ import {
   CalendarClock,
   Check,
   X,
+  Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePrediction } from '@/components/prediction-provider'
 import { useLeagueDetail } from '@/hooks/use-league-detail'
 import { useMatch } from '@/hooks/use-match'
-import { formatKickoff, pointsTier } from '@/lib/format'
+import {
+  displayLiveMinute,
+  formatDayLabel,
+  formatKickoff,
+  pointsTier,
+} from '@/lib/format'
 import type {
   CompletedMatchSummary,
+  League,
   LiveMatchSummary,
+  Match,
   StandingRow,
   UpcomingMatchSummary,
   UUID,
@@ -60,7 +68,14 @@ export function LeagueDetailScreen({ leagueId }: Props) {
     )
   }
 
-  const { league, standings, liveMatches, upcomingMatches, completedMatches } = data
+  const {
+    league,
+    isAdmin,
+    standings,
+    liveMatches,
+    upcomingMatches,
+    completedMatches,
+  } = data
   const hasLive = liveMatches.length > 0
   const userStanding = standings.find((s) => s.profile.displayName === 'You')
   const unpredictedCount = upcomingMatches.filter(
@@ -114,77 +129,33 @@ export function LeagueDetailScreen({ leagueId }: Props) {
                 {'No live'}
               </Badge>
             )}
+            {isAdmin && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 flex-shrink-0"
+                asChild
+              >
+                <Link href={`/leagues/${leagueId}/settings`} aria-label="League settings">
+                  <Settings className="h-4 w-4" />
+                </Link>
+              </Button>
+            )}
           </div>
         </div>
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-4 space-y-6">
         {hasLive && (
-          <section className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Circle className="h-2 w-2 fill-destructive text-destructive animate-pulse" />
-              <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                {'Live Matches'}
-              </h2>
-            </div>
-
-            {liveMatches.map((m) => (
-              <LiveMatchCard
-                key={m.match.id}
-                summary={m}
-                leagueId={leagueId}
-                expanded={expandedMatchId === m.match.id}
-                onToggle={() =>
-                  setExpandedMatchId(
-                    expandedMatchId === m.match.id ? null : m.match.id,
-                  )
-                }
-              />
-            ))}
-          </section>
-        )}
-
-        {!hasLive && (
-          <Card className="bg-card border-border overflow-hidden">
-            <div className="p-5 text-center">
-              <div className="h-12 w-12 rounded-full bg-secondary flex items-center justify-center mx-auto mb-3">
-                <CalendarClock className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <p className="text-sm font-semibold text-foreground">
-                {'No live matches right now'}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {'Next match kicks off '}
-                {upcomingMatches.length > 0 ? (
-                  <span className="text-foreground font-medium">
-                    {formatKickoff(upcomingMatches[0].match.kickoffTime)}
-                  </span>
-                ) : (
-                  <span>{'soon'}</span>
-                )}
-              </p>
-              {unpredictedCount > 0 && (
-                <Button
-                  size="sm"
-                  className="mt-4 gap-1.5"
-                  onClick={() => {
-                    const first = upcomingMatches.find(
-                      (u) => u.userPrediction === null,
-                    )
-                    if (first) openPrediction(first.match.id)
-                  }}
-                >
-                  {'Complete Predictions'}
-                  <Badge
-                    variant="secondary"
-                    className="bg-primary-foreground/20 text-primary-foreground ml-1 text-xs px-1.5 py-0"
-                  >
-                    {unpredictedCount}
-                  </Badge>
-                </Button>
-              )}
-            </div>
-          </Card>
+          <LiveMatchesSection
+            liveMatches={liveMatches}
+            league={league}
+            leagueId={leagueId}
+            expandedMatchId={expandedMatchId}
+            onToggle={(id) =>
+              setExpandedMatchId(expandedMatchId === id ? null : id)
+            }
+          />
         )}
 
         <section className="space-y-3">
@@ -194,43 +165,367 @@ export function LeagueDetailScreen({ leagueId }: Props) {
           <StandingsTable standings={standings} hasLive={hasLive} />
         </section>
 
-        {!hasLive && completedMatches.length > 0 && (
-          <section className="space-y-3">
-            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-              {'Recent Results'}
-            </h2>
-            <Card className="bg-card border-border overflow-hidden divide-y divide-border/30">
-              {completedMatches.map((m) => (
-                <CompletedMatchRow key={m.match.id} summary={m} />
-              ))}
-            </Card>
-          </section>
-        )}
+        <UpcomingSection
+          upcoming={upcomingMatches}
+          league={league}
+          unpredictedCount={unpredictedCount}
+          onPredict={openPrediction}
+        />
 
-        {upcomingMatches.length > 0 && (
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                {'Upcoming'}
-              </h2>
-              {unpredictedCount > 0 && (
-                <span className="text-xs font-medium text-primary">
-                  {unpredictedCount} {'left to predict'}
-                </span>
-              )}
-            </div>
-
-            {upcomingMatches.map((u) => (
-              <UpcomingMatchCard
-                key={u.match.id}
-                summary={u}
-                onPredict={() => openPrediction(u.match.id)}
-              />
-            ))}
-          </section>
+        {completedMatches.length > 0 && (
+          <RecentResultsSection completed={completedMatches} />
         )}
       </div>
     </div>
+  )
+}
+
+// ── Live matches: grouped by competition (single-comp leagues skip header) ─
+
+function LiveMatchesSection({
+  liveMatches,
+  league,
+  leagueId,
+  expandedMatchId,
+  onToggle,
+}: {
+  liveMatches: LiveMatchSummary[]
+  league: League
+  leagueId: UUID
+  expandedMatchId: UUID | null
+  onToggle: (matchId: UUID) => void
+}) {
+  const compNameById = useMemo(() => {
+    const m = new Map<UUID, string>()
+    for (const lc of league.competitions) {
+      m.set(lc.competition.id, lc.competition.name)
+    }
+    return m
+  }, [league.competitions])
+  const showCompHeader = league.competitions.length > 1
+
+  const compBuckets = useMemo(
+    () => bucketByCompetition(liveMatches, compNameById),
+    [liveMatches, compNameById],
+  )
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Circle className="h-2 w-2 fill-destructive text-destructive animate-pulse" />
+        <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+          {'Live Matches'}
+        </h2>
+      </div>
+
+      <div className="space-y-3">
+        {compBuckets.map((comp) => (
+          <div key={comp.competitionId} className="space-y-2">
+            {showCompHeader && (
+              <h4 className="text-[11px] font-medium text-muted-foreground tracking-wide px-1">
+                {comp.name}
+              </h4>
+            )}
+            <div className="space-y-3">
+              {comp.matches.map((m) => (
+                <LiveMatchCard
+                  key={m.match.id}
+                  summary={m}
+                  leagueId={leagueId}
+                  expanded={expandedMatchId === m.match.id}
+                  onToggle={() => onToggle(m.match.id)}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+// ── Upcoming: day buckets > competition groups > matches ────────────────────
+//
+// Layout: outer sticky labels are days ("TODAY" / "TOMORROW" / "WED 14 MAY").
+// Inside each day, matches are sub-grouped by competition (only when the
+// league tracks multiple comps — single-comp leagues skip the sub-header).
+// Matches inside a competition group are sorted by kickoff time.
+//
+// Default: show the next 2 non-empty days. "Load more" appends the next
+// non-empty day, with the button label telling you exactly what's about
+// to appear and how many matches are in it. Empty days (international
+// breaks, etc.) are skipped automatically.
+
+const DAYS_INITIAL = 2
+
+type DayBucket = {
+  key: string
+  date: Date
+  matches: UpcomingMatchSummary[]
+}
+
+function bucketByDay(matches: UpcomingMatchSummary[]): DayBucket[] {
+  const buckets = new Map<string, DayBucket>()
+  for (const m of matches) {
+    const d = new Date(m.match.kickoffTime)
+    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+    let bucket = buckets.get(key)
+    if (!bucket) {
+      const startOfDay = new Date(d)
+      startOfDay.setHours(0, 0, 0, 0)
+      bucket = { key, date: startOfDay, matches: [] }
+      buckets.set(key, bucket)
+    }
+    bucket.matches.push(m)
+  }
+  return Array.from(buckets.values()).sort(
+    (a, b) => a.date.getTime() - b.date.getTime(),
+  )
+}
+
+// Generic over the match-summary kind (live / upcoming / completed) so
+// both LiveMatchesSection and UpcomingSection can call it.
+function bucketByCompetition<T extends { match: Match }>(
+  matches: T[],
+  compNameById: Map<UUID, string>,
+): Array<{ competitionId: UUID; name: string; matches: T[] }> {
+  const buckets = new Map<
+    UUID,
+    { competitionId: UUID; name: string; matches: T[] }
+  >()
+  for (const m of matches) {
+    const cid = m.match.competitionId
+    let bucket = buckets.get(cid)
+    if (!bucket) {
+      bucket = {
+        competitionId: cid,
+        name: compNameById.get(cid) ?? '—',
+        matches: [],
+      }
+      buckets.set(cid, bucket)
+    }
+    bucket.matches.push(m)
+  }
+  // Order comp groups by their earliest kickoff so the user sees the
+  // next thing happening first.
+  return Array.from(buckets.values()).sort((a, b) =>
+    a.matches[0].match.kickoffTime.localeCompare(b.matches[0].match.kickoffTime),
+  )
+}
+
+function UpcomingSection({
+  upcoming,
+  league,
+  unpredictedCount,
+  onPredict,
+}: {
+  upcoming: UpcomingMatchSummary[]
+  league: League
+  unpredictedCount: number
+  onPredict: (matchId: UUID) => void
+}) {
+  const compNameById = useMemo(() => {
+    const m = new Map<UUID, string>()
+    for (const lc of league.competitions) {
+      m.set(lc.competition.id, lc.competition.name)
+    }
+    return m
+  }, [league.competitions])
+  const showCompHeader = league.competitions.length > 1
+
+  const days = useMemo(() => bucketByDay(upcoming), [upcoming])
+  const [daysShown, setDaysShown] = useState(DAYS_INITIAL)
+  const visibleDays = days.slice(0, daysShown)
+  const nextDay = days[daysShown]
+  const remainingDays = days.length - visibleDays.length
+
+  if (upcoming.length === 0) {
+    return (
+      <Card className="bg-card border-border overflow-hidden">
+        <div className="p-5 text-center">
+          <div className="h-12 w-12 rounded-full bg-secondary flex items-center justify-center mx-auto mb-3">
+            <CalendarClock className="h-6 w-6 text-muted-foreground" />
+          </div>
+          <p className="text-sm font-semibold text-foreground">
+            {'No upcoming fixtures'}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {'Check back when the next round is scheduled.'}
+          </p>
+        </div>
+      </Card>
+    )
+  }
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+          {'Upcoming'}
+        </h2>
+        {unpredictedCount > 0 && (
+          <span className="text-xs font-medium text-primary">
+            {unpredictedCount} {'to predict'}
+          </span>
+        )}
+      </div>
+
+      <div className="space-y-5">
+        {visibleDays.map((day) => {
+          const compBuckets = bucketByCompetition(day.matches, compNameById)
+          return (
+            <div key={day.key} className="space-y-2">
+              {/* Sticky day label — sits below the page header. */}
+              <div className="sticky top-[3.25rem] z-[5] -mx-4 px-4 py-1.5 bg-background/95 backdrop-blur-sm">
+                <h3 className="text-[11px] font-bold text-foreground uppercase tracking-wider">
+                  {formatDayLabel(day.date)}
+                </h3>
+              </div>
+
+              <div className="space-y-3">
+                {compBuckets.map((comp) => (
+                  <div key={comp.competitionId} className="space-y-2">
+                    {showCompHeader && (
+                      <h4 className="text-[11px] font-medium text-muted-foreground tracking-wide px-1">
+                        {comp.name}
+                      </h4>
+                    )}
+                    <div className="space-y-3">
+                      {comp.matches.map((u) => (
+                        <UpcomingMatchCard
+                          key={u.match.id}
+                          summary={u}
+                          onPredict={() => onPredict(u.match.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {remainingDays > 0 && nextDay && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full text-xs"
+          onClick={() => setDaysShown((d) => d + 1)}
+        >
+          {`Load ${formatDayLabel(nextDay.date).toLowerCase().replace(/^\w/, (c) => c.toUpperCase())} `}
+          <span className="text-muted-foreground ml-1">
+            ({nextDay.matches.length}{' '}
+            {nextDay.matches.length === 1 ? 'match' : 'matches'})
+          </span>
+          <ChevronDown className="h-3.5 w-3.5 ml-1" />
+        </Button>
+      )}
+
+      {daysShown > DAYS_INITIAL && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full text-xs text-muted-foreground"
+          onClick={() => setDaysShown(DAYS_INITIAL)}
+        >
+          {'Collapse'}
+        </Button>
+      )}
+    </section>
+  )
+}
+
+// ── Recent Results: last completed round only, expandable ───────────────────
+
+function RecentResultsSection({
+  completed,
+}: {
+  completed: CompletedMatchSummary[]
+}) {
+  // Group by round and pick the most recent round (by kickoff_time within
+  // the round). For league play this naturally maps to "last matchday";
+  // for cups it's the most recent stage played.
+  const { defaultRound, allRounds } = useMemo(() => {
+    const byRound = new Map<UUID, CompletedMatchSummary[]>()
+    for (const m of completed) {
+      const arr = byRound.get(m.match.round.id) ?? []
+      arr.push(m)
+      byRound.set(m.match.round.id, arr)
+    }
+    // Sort rounds by latest match in each round, descending.
+    const rounds = Array.from(byRound.entries())
+      .map(([id, matches]) => ({
+        id,
+        name: matches[0].match.round.name,
+        sortOrder: matches[0].match.round.sortOrder,
+        matches: matches.sort((a, b) =>
+          b.match.kickoffTime.localeCompare(a.match.kickoffTime),
+        ),
+        latestKickoff: matches.reduce(
+          (latest, m) =>
+            m.match.kickoffTime > latest ? m.match.kickoffTime : latest,
+          '',
+        ),
+      }))
+      .sort((a, b) => b.latestKickoff.localeCompare(a.latestKickoff))
+    return {
+      defaultRound: rounds[0],
+      allRounds: rounds,
+    }
+  }, [completed])
+
+  const [showAll, setShowAll] = useState(false)
+  const visible = showAll ? allRounds : [defaultRound]
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+          {'Recent Results'}
+        </h2>
+        <span className="text-xs text-muted-foreground">
+          {showAll
+            ? `${allRounds.length} rounds`
+            : defaultRound.name}
+        </span>
+      </div>
+
+      {visible.map((round) => (
+        <div key={round.id} className="space-y-1.5">
+          {showAll && (
+            <h3 className="text-[11px] font-semibold text-muted-foreground/70 uppercase tracking-wider px-1">
+              {round.name}
+            </h3>
+          )}
+          <Card className="bg-card border-border overflow-hidden divide-y divide-border/30">
+            {round.matches.map((m) => (
+              <CompletedMatchRow key={m.match.id} summary={m} />
+            ))}
+          </Card>
+        </div>
+      ))}
+
+      {allRounds.length > 1 && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full text-xs"
+          onClick={() => setShowAll((v) => !v)}
+        >
+          {showAll
+            ? 'Show less'
+            : `Show all ${allRounds.length} rounds`}
+          <ChevronDown
+            className={cn(
+              'h-3.5 w-3.5 ml-1 transition-transform',
+              showAll && 'rotate-180',
+            )}
+          />
+        </Button>
+      )}
+    </section>
   )
 }
 
@@ -265,7 +560,7 @@ function LiveMatchCard({
           <div className="flex items-center justify-between mb-3">
             <Badge variant="destructive" className="gap-1 text-xs">
               <Circle className="h-1.5 w-1.5 fill-current" />
-              {match.liveMinute}
+              {displayLiveMinute(match.liveMinute, match.status, match.kickoffTime) ?? 'LIVE'}
             </Badge>
             {userPrediction && (
               <div className="flex items-center gap-2 text-xs">

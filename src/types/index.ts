@@ -88,13 +88,29 @@ export type LeagueSettings = {
   boosters: BoosterPoolConfig
 }
 
+// Lite competition projection embedded in League — keeps the league
+// payload small but carries everything the UI needs to render the
+// competition emblem/name and detect a finished season.
+export type LeagueCompetitionLink = {
+  competition: Pick<
+    Competition,
+    'id' | 'name' | 'code' | 'emblemUrl' | 'seasonEnd'
+  >
+  // Cutoff for auto-included matches. Matches kicking off before this
+  // timestamp are excluded from the league. Defaults to league creation
+  // time for legacy leagues, "now" for new ones.
+  startDate: ISODateTime
+}
+
 export type League = {
   id: UUID
   name: string
   description: string | null
   inviteCode: string
   icon: string | null // emoji or short label; nullable, falls back to trophy
-  competition: Pick<Competition, 'id' | 'name' | 'code' | 'emblemUrl' | 'seasonEnd'>
+  // A league can follow N competitions. Each link carries its own
+  // start_date so mid-season joiners don't compete against history.
+  competitions: LeagueCompetitionLink[]
   createdBy: UUID
   settings: LeagueSettings
   memberCount: number
@@ -212,6 +228,11 @@ export type MyLeaguesPayload = {
 
 export type LeagueDetailPayload = {
   league: League
+  // True when the current viewer is an admin of this league. Drives the
+  // visibility of admin-only affordances (e.g. "Add competition").
+  // RLS still enforces auth on the actual mutation; this just hides
+  // buttons that would otherwise error.
+  isAdmin: boolean
   standings: StandingRow[]
   liveMatches: LiveMatchSummary[]
   upcomingMatches: UpcomingMatchSummary[]
@@ -281,9 +302,33 @@ export type QuickPredictInput = {
 export type CreateLeagueInput = {
   name: string
   description: string | null
-  competitionId: UUID
+  // One or more real-world competitions to track. New matches synced
+  // into any of these auto-flow into the league.
+  competitionIds: UUID[]
   icon: string | null
   settings: LeagueSettings
+}
+
+export type AddLeagueCompetitionInput = {
+  leagueId: UUID
+  competitionId: UUID
+}
+
+// Partial update for league metadata. Only fields you pass are written
+// — undefined means "leave it alone", null on `icon` means "clear it".
+// Restricted to admins by RLS (leagues_update_admin).
+export type UpdateLeagueInput = {
+  leagueId: UUID
+  name?: string
+  icon?: string | null
+}
+
+export type UpdateProfileInput = {
+  // Both fields are optional so callers can update name independently of
+  // avatar (the common case after typing in the input). Pass `null` for
+  // avatarUrl to clear the existing one.
+  displayName?: string
+  avatarUrl?: string | null
 }
 
 export type CreateLeagueResult = {

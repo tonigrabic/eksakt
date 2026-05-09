@@ -285,13 +285,19 @@ const league = (
   description: null,
   inviteCode,
   icon,
-  competition: {
-    id: competitions[competitionId].id,
-    name: competitions[competitionId].name,
-    code: competitions[competitionId].code,
-    emblemUrl: competitions[competitionId].emblemUrl,
-    seasonEnd: competitions[competitionId].seasonEnd,
-  },
+  competitions: [
+    {
+      competition: {
+        id: competitions[competitionId].id,
+        name: competitions[competitionId].name,
+        code: competitions[competitionId].code,
+        emblemUrl: competitions[competitionId].emblemUrl,
+        seasonEnd: competitions[competitionId].seasonEnd,
+      },
+      // Mock leagues "started" 30 days ago so all fixture matches count.
+      startDate: iso(NOW - 30 * DAY),
+    },
+  ],
   createdBy: CURRENT_USER_ID,
   settings: { boosters: defaultBoosters },
   memberCount: members,

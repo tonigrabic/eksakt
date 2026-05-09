@@ -143,8 +143,24 @@ export async function createLeague(
 ): Promise<CreateLeagueResult> {
   const id = `lg-mock-${Date.now()}`
   const inviteCode = Math.random().toString(36).slice(2, 8).toUpperCase()
-  const competition = competitions[input.competitionId]
-  if (!competition) throw new Error(`Competition not found: ${input.competitionId}`)
+  if (input.competitionIds.length === 0) {
+    throw new Error('Pick at least one competition')
+  }
+  const now = new Date().toISOString()
+  const linked = input.competitionIds.map((cid) => {
+    const competition = competitions[cid]
+    if (!competition) throw new Error(`Competition not found: ${cid}`)
+    return {
+      competition: {
+        id: competition.id,
+        name: competition.name,
+        code: competition.code,
+        emblemUrl: competition.emblemUrl,
+        seasonEnd: competition.seasonEnd,
+      },
+      startDate: now,
+    }
+  })
 
   const league: League = {
     id,
@@ -152,17 +168,11 @@ export async function createLeague(
     description: input.description,
     inviteCode,
     icon: input.icon,
-    competition: {
-      id: competition.id,
-      name: competition.name,
-      code: competition.code,
-      emblemUrl: competition.emblemUrl,
-      seasonEnd: competition.seasonEnd,
-    },
+    competitions: linked,
     createdBy: CURRENT_USER_ID,
     settings: input.settings,
     memberCount: 1,
-    createdAt: new Date().toISOString(),
+    createdAt: now,
   }
   leaguesTable[id] = league
   return delay({ league, inviteUrl: `eksakt.app/join/${inviteCode}` })

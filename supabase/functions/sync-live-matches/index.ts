@@ -55,15 +55,27 @@ serve(async (req: Request) => {
       dateTo,
     });
 
+    // Status is a monotonic state machine: scheduled → live → finished.
+    // football-data.org's free tier sometimes returns stale "TIMED/SCHEDULED"
+    // views (CDN cache) for matches that have already kicked off, causing
+    // a live match to flip back to scheduled. Real-world matches don't
+    // un-start, so we refuse to regress.
+    const STATUS_RANK: Record<string, number> = {
+      scheduled: 0,
+      live: 1,
+      finished: 2,
+    };
+
     let updated = 0;
     let unchanged = 0;
+    let regressionsSkipped = 0;
     const transitions: Array<{ id: number; from: string; to: string }> = [];
 
     for (const m of apiMatches) {
-      const newStatus = mapStatus(m.status);
-      const newHome = m.score.fullTime.home;
-      const newAway = m.score.fullTime.away;
-      const newMinute = formatLiveMinute(m);
+      const apiStatus = mapStatus(m.status);
+      const apiHome = m.score.fullTime.home;
+      const apiAway = m.score.fullTime.away;
+      const apiMinute = formatLiveMinute(m);
 
       // Read existing row so we can no-op when nothing changed (saves
       // wear on Postgres + reduces Realtime broadcast noise).
@@ -78,32 +90,48 @@ serve(async (req: Request) => {
       }
       if (!existing) continue; // fixtures haven't been imported yet
 
-      const same =
-        existing.status === newStatus &&
-        existing.home_score === newHome &&
-        existing.away_score === newAway &&
-        existing.live_minute === newMinute;
-      if (same) {
+      // If the API says the match is in an "earlier" state than what we
+      // already have, ignore the entire row — including scores. The score
+      // in a regression payload is unreliable (often null or 0-0).
+      const isRegression =
+        STATUS_RANK[apiStatus] < STATUS_RANK[existing.status];
+      if (isRegression) {
+        regressionsSkipped++;
+        continue;
+      }
+
+      // Build the patch defensively: never write nulls back over real data
+      // (free tier sometimes returns null scores even on IN_PLAY).
+      const patch: Record<string, unknown> = {};
+      if (apiStatus !== existing.status) patch.status = apiStatus;
+      if (apiHome !== null && apiHome !== existing.home_score) {
+        patch.home_score = apiHome;
+      }
+      if (apiAway !== null && apiAway !== existing.away_score) {
+        patch.away_score = apiAway;
+      }
+      if (apiMinute !== existing.live_minute) patch.live_minute = apiMinute;
+
+      if (Object.keys(patch).length === 0) {
         unchanged++;
         continue;
       }
 
       const { error: updErr } = await supabase
         .from("matches")
-        .update({
-          status: newStatus,
-          home_score: newHome,
-          away_score: newAway,
-          live_minute: newMinute,
-        })
+        .update(patch)
         .eq("id", existing.id);
       if (updErr) {
         console.error(`update failed for ${m.id}: ${updErr.message}`);
         continue;
       }
       updated++;
-      if (existing.status !== newStatus) {
-        transitions.push({ id: m.id, from: existing.status, to: newStatus });
+      if (patch.status && existing.status !== patch.status) {
+        transitions.push({
+          id: m.id,
+          from: existing.status,
+          to: apiStatus,
+        });
       }
     }
 
@@ -113,6 +141,7 @@ serve(async (req: Request) => {
       considered: apiMatches.length,
       updated,
       unchanged,
+      regressionsSkipped,
       transitions,
     });
   } catch (err) {

@@ -45,6 +45,101 @@ export type Database = {
         }
         Relationships: []
       }
+      league_competitions: {
+        Row: {
+          added_at: string
+          added_by: string | null
+          competition_id: string
+          id: string
+          league_id: string
+          start_date: string
+        }
+        Insert: {
+          added_at?: string
+          added_by?: string | null
+          competition_id: string
+          id?: string
+          league_id: string
+          start_date?: string
+        }
+        Update: {
+          added_at?: string
+          added_by?: string | null
+          competition_id?: string
+          id?: string
+          league_id?: string
+          start_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "league_competitions_added_by_fkey"
+            columns: ["added_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "league_competitions_competition_id_fkey"
+            columns: ["competition_id"]
+            isOneToOne: false
+            referencedRelation: "competitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "league_competitions_league_id_fkey"
+            columns: ["league_id"]
+            isOneToOne: false
+            referencedRelation: "leagues"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      league_matches: {
+        Row: {
+          added_at: string
+          added_by: string | null
+          id: string
+          league_id: string
+          match_id: string
+        }
+        Insert: {
+          added_at?: string
+          added_by?: string | null
+          id?: string
+          league_id: string
+          match_id: string
+        }
+        Update: {
+          added_at?: string
+          added_by?: string | null
+          id?: string
+          league_id?: string
+          match_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "league_matches_added_by_fkey"
+            columns: ["added_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "league_matches_league_id_fkey"
+            columns: ["league_id"]
+            isOneToOne: false
+            referencedRelation: "leagues"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "league_matches_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: false
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       league_members: {
         Row: {
           id: string
@@ -86,7 +181,6 @@ export type Database = {
       }
       leagues: {
         Row: {
-          competition_id: string
           created_at: string
           created_by: string
           description: string | null
@@ -97,7 +191,6 @@ export type Database = {
           settings: Json
         }
         Insert: {
-          competition_id: string
           created_at?: string
           created_by: string
           description?: string | null
@@ -108,7 +201,6 @@ export type Database = {
           settings?: Json
         }
         Update: {
-          competition_id?: string
           created_at?: string
           created_by?: string
           description?: string | null
@@ -119,13 +211,6 @@ export type Database = {
           settings?: Json
         }
         Relationships: [
-          {
-            foreignKeyName: "leagues_competition_id_fkey"
-            columns: ["competition_id"]
-            isOneToOne: false
-            referencedRelation: "competitions"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "leagues_created_by_fkey"
             columns: ["created_by"]
@@ -417,7 +502,39 @@ export type Database = {
       }
       dispatch_sync_fixtures: { Args: { p_code: string }; Returns: number }
       dispatch_sync_live_matches: { Args: { p_code: string }; Returns: number }
+      get_league_matches: {
+        Args: { p_league_id: string }
+        Returns: {
+          api_external_id: number | null
+          away_score: number | null
+          away_team_id: string | null
+          competition_id: string
+          created_at: string
+          home_score: number | null
+          home_team_id: string | null
+          id: string
+          kickoff_time: string
+          live_minute: string | null
+          matchday: number | null
+          round_id: string
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "matches"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       is_league_member: { Args: { p_league_id: string }; Returns: boolean }
+      join_league_by_code: { Args: { p_code: string }; Returns: string }
+      league_match_ids: {
+        Args: { p_league_id: string }
+        Returns: {
+          match_id: string
+        }[]
+      }
       match_has_kicked_off: { Args: { p_match_id: string }; Returns: boolean }
       rarity_bonus: {
         Args: { p_matching_count: number; p_total_count: number }
