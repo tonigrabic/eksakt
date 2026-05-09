@@ -1,7 +1,7 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
-import { getDashboard } from '@/lib/mock/api'
+import { getDashboard } from '@/lib/supabase/api'
 import { queryKeys } from '@/lib/query-client'
 
 export function useDashboard() {

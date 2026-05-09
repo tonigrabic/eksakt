@@ -1,7 +1,7 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
-import { getLeagueDetail } from '@/lib/mock/api'
+import { getLeagueDetail } from '@/lib/supabase/api'
 import { queryKeys } from '@/lib/query-client'
 import type { UUID } from '@/types'
 

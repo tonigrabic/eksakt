@@ -1,7 +1,7 @@
 'use client'
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { quickPredict, submitPrediction } from '@/lib/mock/api'
+import { quickPredict, submitPrediction } from '@/lib/supabase/api'
 import type { QuickPredictInput, SubmitPredictionInput } from '@/types'
 
 // Invalidates everything that depends on prediction state. Mock writes are

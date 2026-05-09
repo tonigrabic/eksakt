@@ -1,7 +1,7 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
-import { listCompetitions } from '@/lib/mock/api'
+import { listCompetitions } from '@/lib/supabase/api'
 
 export function useCompetitions() {
   return useQuery({
