@@ -1,0 +1,28 @@
+---
+description: Core project context for football prediction app
+alwaysApply: true
+---
+
+# Football Prediction League App
+
+This is a mobile-first football prediction app where friends compete in private leagues by predicting exact match scores. Target launch: World Cup 2026 (June 11, 2026).
+
+## Key Context Files
+- `docs/PROJECT.md` - full product spec, scoring system, screens, user flows
+- `docs/TECH_STACK.md` - stack, architecture, project structure
+- `docs/DATABASE.md` - complete schema with all tables, types, and RLS policies
+
+## Stack Summary
+- Next.js 16 (App Router) + TypeScript (strict)
+- Tailwind CSS v4 + shadcn/ui (dark theme, designed via v0)
+- TanStack Query v5 for client data fetching
+- Supabase (Auth, Postgres with RLS, Realtime, Edge Functions)
+- football-data.org v4 API for match data and live scores
+- Deploy on Vercel
+
+## Critical Rules
+- **v0 owns all design** -- never manually write component styles or globals.css. Pull from v0.
+- Server Components by default. Only `"use client"` for interactive elements.
+- All Supabase queries in client components go through TanStack Query hooks in `src/hooks/`.
+- Dark theme only. Mobile-first. No light mode.
+- Predictions must be hidden from other users until match kickoff (RLS enforced).

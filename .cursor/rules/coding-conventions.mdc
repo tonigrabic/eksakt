@@ -1,0 +1,36 @@
+---
+description: Coding conventions for TypeScript, React, and Next.js
+globs: "**/*.{ts,tsx}"
+alwaysApply: false
+---
+
+# Coding Conventions
+
+## TypeScript
+- Strict mode, no `any` types. Use `unknown` and narrow.
+- Prefer `interface` for object shapes, `type` for unions/intersections.
+- Export types from `src/types/` for shared types.
+- Use `as const` for literal types and enums.
+
+## React / Next.js
+- Server Components by default. Only add `"use client"` when needed (event handlers, hooks, browser APIs).
+- Colocate page-specific components in the route folder. Shared components go in `src/components/`.
+- Use `src/components/ui/` exclusively for shadcn/ui components (pulled from v0).
+- Named exports for components. Default exports only for Next.js pages/layouts.
+
+## Data Fetching
+- Server components: use Supabase server client directly.
+- Client components: use TanStack Query hooks from `src/hooks/`.
+- Hook naming: `useMatches()`, `useLeague(id)`, `usePredictions(matchId)`.
+- Cache keys: `['matches', filters]`, `['league', id]`, `['predictions', matchId, leagueId]`.
+
+## File Naming
+- Components: PascalCase (`MatchCard.tsx`, `PredictionModal.tsx`)
+- Utilities/hooks: camelCase (`useMatches.ts`, `scoring.ts`)
+- Route files: Next.js conventions (`page.tsx`, `layout.tsx`, `loading.tsx`)
+
+## Supabase
+- Browser client: `src/lib/supabase/client.ts`
+- Server client: `src/lib/supabase/server.ts`
+- Middleware: `src/lib/supabase/middleware.ts`
+- Never expose service role key on client. Use anon key + RLS.

@@ -1,0 +1,63 @@
+# Eksakt — Supabase project configuration
+# https://supabase.com/docs/guides/cli/config
+
+project_id = "eksakt"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+enabled = false
+port = 54329
+pool_mode = "transaction"
+default_pool_size = 20
+max_client_conn = 100
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/auth/callback"]
+jwt_expiry = 3600
+enable_signup = true
+enable_anonymous_sign_ins = false
+minimum_password_length = 8
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false  # magic link is the primary auth — no manual confirmation
+
+[auth.external.google]
+enabled = false  # toggle on once OAuth credentials are added in dashboard
+client_id = ""
+secret = ""
+redirect_uri = ""
+
+[edge_runtime]
+enabled = true
+policy = "oneshot"
+inspector_port = 8083

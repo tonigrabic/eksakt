@@ -1,0 +1,32 @@
+---
+description: Design and styling rules - v0 leads all design work
+globs: "**/*.{tsx,css}"
+alwaysApply: false
+---
+
+# Design Rules
+
+## v0 Leads Design
+- All UI components, layouts, and styles originate from v0.
+- Do not manually author globals.css, component styles, or design tokens.
+- When adding new UI, create it in v0 first, then pull the code.
+- shadcn/ui components in `src/components/ui/` come from v0 output.
+
+## Theme
+- Dark theme only. No light mode toggle.
+- Base color: zinc (configured in components.json).
+- Design for evening viewing during live football matches.
+- High contrast text for mobile readability.
+
+## Mobile-First
+- Design for 375px viewport first, then scale up.
+- Touch targets minimum 44px.
+- Bottom navigation for primary app navigation.
+- Swipeable/scrollable containers for match lists.
+- Prediction inputs must be easy to use on mobile (large +/- buttons).
+
+## Animation
+- Subtle transitions for state changes.
+- Celebration animations for high-scoring predictions.
+- Live position change indicators (green up arrows, red down arrows).
+- Countdown timer animations for prediction deadlines.
