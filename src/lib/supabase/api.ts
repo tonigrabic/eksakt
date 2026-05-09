@@ -162,6 +162,12 @@ async function fetchMatchesForLeague(leagueId: UUID): Promise<Match[]> {
   return rows.map(rowToMatch)
 }
 
+// Predictions joined with their persisted `points` row when finished.
+// PostgREST embeds via the predictions→points 1:1 FK relationship; the
+// embed comes back null for predictions whose match hasn't been scored
+// yet, so the same query works for live + finished matches.
+const PREDICTION_SELECT = '*, points(*)'
+
 async function fetchPredictionsForLeague(
   leagueId: UUID,
 ): Promise<Prediction[]> {
@@ -171,10 +177,12 @@ async function fetchPredictionsForLeague(
   const supabase = createClient()
   const { data, error } = await supabase
     .from('predictions')
-    .select('*')
+    .select(PREDICTION_SELECT)
     .eq('league_id', leagueId)
   if (error) throw error
-  return (data ?? []).map(rowToPrediction)
+  return (data ?? []).map((row) =>
+    rowToPrediction(row as Parameters<typeof rowToPrediction>[0]),
+  )
 }
 
 // ── Dashboard ───────────────────────────────────────────────────────────────
@@ -217,6 +225,7 @@ async function buildLeagueDashboardSummary(
     matches,
     predictions,
     leaguePool: league.settings.boosters.pool,
+    currentUserId: userId,
   })
   const userRow = standings.find((r) => r.profile.id === userId)
   const profileById = new Map(members.map((m) => [m.userId, m.profile]))
@@ -230,6 +239,7 @@ async function buildLeagueDashboardSummary(
         predictions: predictions.filter((p) => p.matchId === match.id),
         userId,
         profileById,
+        memberCount: members.length,
       }),
     )
 
@@ -250,6 +260,15 @@ async function buildLeagueDashboardSummary(
     (u) => u.userPrediction === null,
   ).length
 
+  // Compact preview for the dashboard card: top 3 + the user's row if
+  // they're outside the top 3. The dashboard renderer can detect the
+  // gap from row[i].position vs row[i-1].position and draw the "…"
+  // separator without us having to flag it.
+  const top3 = standings.slice(0, 3)
+  const userInTop3 = userRow ? top3.includes(userRow) : false
+  const standingsPreview =
+    userRow && !userInTop3 ? [...top3, userRow] : top3
+
   return {
     league,
     userPosition: userRow?.position ?? standings.length + 1,
@@ -261,6 +280,7 @@ async function buildLeagueDashboardSummary(
     liveMatches,
     upcomingMatches,
     unpredictedCount,
+    standingsPreview,
   }
 }
 
@@ -290,6 +310,7 @@ export async function getMyLeagues(): Promise<MyLeaguesPayload> {
       matches,
       predictions,
       leaguePool: league.settings.boosters.pool,
+      currentUserId: userId,
     })
     const userRow = standings.find((r) => r.profile.id === userId)
     const userPosition = userRow?.position ?? standings.length + 1
@@ -349,6 +370,7 @@ export async function getLeagueDetail(
     matches,
     predictions,
     leaguePool: league.settings.boosters.pool,
+    currentUserId: userId,
   })
   const profileById = new Map(members.map((m) => [m.userId, m.profile]))
 
@@ -376,6 +398,7 @@ export async function getLeagueDetail(
         predictions: predictions.filter((p) => p.matchId === match.id),
         userId,
         profileById,
+        memberCount: members.length,
       }),
     ),
     upcomingMatches: upcoming.map((match) =>
@@ -393,6 +416,7 @@ export async function getLeagueDetail(
         predictions: predictions.filter((p) => p.matchId === match.id),
         userId,
         profileById,
+        memberCount: members.length,
       }),
     ),
   }
@@ -422,11 +446,13 @@ export async function getMatchDetail(
   // blind-prediction rule (others' picks hidden pre-kickoff).
   const { data: predRows, error: pErr } = await supabase
     .from('predictions')
-    .select('*')
+    .select(PREDICTION_SELECT)
     .eq('match_id', matchId)
     .eq('league_id', leagueId)
   if (pErr) throw pErr
-  const predictions = (predRows ?? []).map(rowToPrediction)
+  const predictions = (predRows ?? []).map((row) =>
+    rowToPrediction(row as Parameters<typeof rowToPrediction>[0]),
+  )
 
   // For the standings tab, we need league-wide context.
   const allLeagueMatches = await fetchMatchesForLeague(leagueId)
@@ -436,11 +462,17 @@ export async function getMatchDetail(
     matches: allLeagueMatches,
     predictions: allLeaguePredictions,
     leaguePool: league.settings.boosters.pool,
+    currentUserId: userId,
   })
 
   const userPredRaw = predictions.find((p) => p.userId === userId) ?? null
   const isLocked = match.status !== 'scheduled'
+  const memberCount = members.length
 
+  // Per-prediction points: prefer the persisted `storedPoints` (server-
+  // authoritative for finished matches). Fall back to live recompute
+  // for in-progress matches and the brief race window after a status
+  // flip but before the trigger fires.
   const detailedWithPoints = predictions.map((p) => ({
     ...p,
     profile:
@@ -449,16 +481,17 @@ export async function getMatchDetail(
     points:
       !isLocked || match.homeScore == null || match.awayScore == null
         ? null
-        : computePoints({
+        : (p.storedPoints ??
+          computePoints({
             prediction: {
               homeScore: p.homeScore,
               awayScore: p.awayScore,
               booster: p.booster,
             },
             finalScore: { home: match.homeScore, away: match.awayScore },
-            rarity: computeRarity(p, predictions),
+            rarity: computeRarity(p, predictions, memberCount),
             final: match.status === 'finished',
-          }),
+          })),
   }))
 
   const userPredDetailed =
@@ -471,7 +504,12 @@ export async function getMatchDetail(
     userPrediction: userPredDetailed,
     bestScoresForUser:
       isLocked && userPredRaw
-        ? buildBestScores({ match, peers: predictions, userPrediction: userPredRaw })
+        ? buildBestScores({
+            match,
+            peers: predictions,
+            userPrediction: userPredRaw,
+            memberCount,
+          })
         : [],
     standings,
   }
@@ -528,6 +566,7 @@ export async function getPredictionContext(
       matches,
       predictions,
       leaguePool: league.settings.boosters.pool,
+      currentUserId: userId,
     })
     const userRow = standings.find((r) => r.profile.id === userId)
     const leader = standings[0]

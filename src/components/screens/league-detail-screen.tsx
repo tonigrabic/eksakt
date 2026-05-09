@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePrediction } from '@/components/prediction-provider'
+import { useCurrentUser } from '@/hooks/use-current-user'
 import { useLeagueDetail } from '@/hooks/use-league-detail'
 import { useMatch } from '@/hooks/use-match'
 import {
@@ -77,7 +78,7 @@ export function LeagueDetailScreen({ leagueId }: Props) {
     completedMatches,
   } = data
   const hasLive = liveMatches.length > 0
-  const userStanding = standings.find((s) => s.profile.displayName === 'You')
+  const userStanding = standings.find((s) => s.isCurrentUser)
   const unpredictedCount = upcomingMatches.filter(
     (u) => u.userPrediction === null,
   ).length
@@ -173,7 +174,10 @@ export function LeagueDetailScreen({ leagueId }: Props) {
         />
 
         {completedMatches.length > 0 && (
-          <RecentResultsSection completed={completedMatches} />
+          <RecentResultsSection
+            completed={completedMatches}
+            leagueId={leagueId}
+          />
         )}
       </div>
     </div>
@@ -441,8 +445,10 @@ function UpcomingSection({
 
 function RecentResultsSection({
   completed,
+  leagueId,
 }: {
   completed: CompletedMatchSummary[]
+  leagueId: UUID
 }) {
   // Group by round and pick the most recent round (by kickoff_time within
   // the round). For league play this naturally maps to "last matchday";
@@ -501,7 +507,11 @@ function RecentResultsSection({
           )}
           <Card className="bg-card border-border overflow-hidden divide-y divide-border/30">
             {round.matches.map((m) => (
-              <CompletedMatchRow key={m.match.id} summary={m} />
+              <CompletedMatchRow
+                key={m.match.id}
+                summary={m}
+                leagueId={leagueId}
+              />
             ))}
           </Card>
         </div>
@@ -638,6 +648,7 @@ function ExpandedPredictionTable({
   leagueId: UUID
 }) {
   const { data, isLoading } = useMatch(matchId, leagueId)
+  const { data: currentUser } = useCurrentUser()
   if (isLoading || !data) {
     return (
       <div className="border-t border-border px-4 py-6 text-center text-xs text-muted-foreground">
@@ -658,7 +669,7 @@ function ExpandedPredictionTable({
       </div>
       <div className="divide-y divide-border/30">
         {sorted.map((p) => {
-          const isUser = p.profile.displayName === 'You'
+          const isUser = p.userId === currentUser?.id
           const total = p.points?.total ?? 0
           const base = p.points?.base ?? 0
           const booster = p.booster
@@ -741,7 +752,10 @@ function StandingsTable({
       <div className="flex items-center text-[11px] text-muted-foreground font-semibold uppercase tracking-wider px-4 py-2.5 border-b border-border bg-secondary/30">
         <span className="w-7 text-center">{'#'}</span>
         <span className="flex-1 pl-2">{'Player'}</span>
-        {hasLive && <span className="w-14 text-center">{'Today'}</span>}
+        {/* "Live" column shown always — values render as em-dash when no
+            points are in flight, so the column structure is consistent
+            regardless of whether matches are happening right now. */}
+        <span className="w-14 text-center">{'Live'}</span>
         <span className="w-14 text-right">{'Total'}</span>
         <span className="w-10 text-right">{'Exact'}</span>
         {hasLive && <span className="w-7" />}
@@ -762,7 +776,7 @@ function StandingRowView({
   row: StandingRow
   hasLive: boolean
 }) {
-  const isUser = row.profile.displayName === 'You'
+  const isUser = row.isCurrentUser
   return (
     <div
       className={cn(
@@ -796,16 +810,16 @@ function StandingRowView({
           <Zap className="h-3 w-3 text-primary/60 flex-shrink-0" />
         )}
       </div>
-      {hasLive && (
-        <span
-          className={cn(
-            'w-14 text-center font-mono font-bold text-sm tabular-nums',
-            row.matchdayPoints > 0 ? 'text-primary' : 'text-muted-foreground/40',
-          )}
-        >
-          {row.matchdayPoints > 0 ? `+${row.matchdayPoints}` : '0'}
-        </span>
-      )}
+      <span
+        className={cn(
+          'w-14 text-center font-mono font-bold text-sm tabular-nums',
+          row.matchdayPoints > 0
+            ? 'text-primary'
+            : 'text-muted-foreground/40',
+        )}
+      >
+        {row.matchdayPoints > 0 ? `+${row.matchdayPoints}` : '—'}
+      </span>
       <span className="w-14 text-right font-bold text-foreground tabular-nums">
         {row.totalPoints + row.matchdayPoints}
       </span>
@@ -831,87 +845,110 @@ function StandingRowView({
 
 // ── Completed match row ──────────────────────────────────────────────────────
 
-function CompletedMatchRow({ summary }: { summary: CompletedMatchSummary }) {
+function CompletedMatchRow({
+  summary,
+  leagueId,
+}: {
+  summary: CompletedMatchSummary
+  leagueId: UUID
+}) {
   const { match, userPrediction } = summary
   const home = match.homeTeam?.name ?? 'TBD'
   const away = match.awayTeam?.name ?? 'TBD'
   const homeScore = match.homeScore ?? 0
   const awayScore = match.awayScore ?? 0
 
+  // Status badge in the top-right of every card. Computed once so the
+  // layout below stays branchless.
+  let statusBadge: React.ReactNode
   if (!userPrediction) {
-    return (
-      <div className="px-4 py-3">
-        <div className="flex items-center justify-between mb-2">
-          <Badge variant="secondary" className="text-xs">{match.round.name}</Badge>
-          <Badge variant="secondary" className="text-xs gap-1 text-muted-foreground">
-            {'No prediction'}
-          </Badge>
-        </div>
-        <div className="flex items-center justify-between text-sm">
-          <span className="font-semibold">{home}</span>
-          <span className="font-bold tabular-nums">{homeScore}-{awayScore}</span>
-          <span className="font-semibold">{away}</span>
-        </div>
-      </div>
+    statusBadge = (
+      <Badge variant="secondary" className="text-xs gap-1 text-muted-foreground">
+        {'No prediction'}
+      </Badge>
     )
+  } else {
+    const isExact =
+      userPrediction.homeScore === homeScore &&
+      userPrediction.awayScore === awayScore
+    const correctOutcome =
+      Math.sign(userPrediction.homeScore - userPrediction.awayScore) ===
+      Math.sign(homeScore - awayScore)
+    if (isExact) {
+      statusBadge = (
+        <Badge className="bg-primary/15 text-primary border-0 text-xs gap-1">
+          <Check className="h-3 w-3" />
+          {'Exact'}
+        </Badge>
+      )
+    } else if (correctOutcome) {
+      statusBadge = (
+        <Badge variant="secondary" className="text-xs gap-1">
+          <Check className="h-3 w-3 text-emerald-500" />
+          {'Outcome'}
+        </Badge>
+      )
+    } else {
+      statusBadge = (
+        <Badge variant="secondary" className="text-xs gap-1 text-muted-foreground">
+          <X className="h-3 w-3 text-destructive" />
+          {'Wrong'}
+        </Badge>
+      )
+    }
   }
 
-  const isExact =
-    userPrediction.homeScore === homeScore && userPrediction.awayScore === awayScore
-  const correctOutcome =
-    Math.sign(userPrediction.homeScore - userPrediction.awayScore) ===
-    Math.sign(homeScore - awayScore)
-  const total = userPrediction.points?.total ?? 0
+  const total = userPrediction?.points?.total ?? 0
 
   return (
-    <div className="px-4 py-3">
+    <Link
+      href={`/matches/${match.id}?league=${leagueId}`}
+      className="block px-4 py-3 hover:bg-muted/40 transition-colors"
+    >
       <div className="flex items-center justify-between mb-2">
-        <Badge variant="secondary" className="text-xs">{match.round.name}</Badge>
-        {isExact ? (
-          <Badge className="bg-primary/15 text-primary border-0 text-xs gap-1">
-            <Check className="h-3 w-3" />
-            {'Exact'}
-          </Badge>
-        ) : correctOutcome ? (
-          <Badge variant="secondary" className="text-xs gap-1">
-            <Check className="h-3 w-3 text-emerald-500" />
-            {'Outcome'}
-          </Badge>
-        ) : (
-          <Badge variant="secondary" className="text-xs gap-1 text-muted-foreground">
-            <X className="h-3 w-3 text-destructive" />
-            {'Wrong'}
-          </Badge>
-        )}
+        <Badge variant="secondary" className="text-xs">
+          {match.round.name}
+        </Badge>
+        {statusBadge}
       </div>
 
       <div className="flex items-center gap-4">
-        <div className="flex-1">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-semibold text-foreground">{home}</span>
-            <span className="font-bold text-foreground tabular-nums">{homeScore}</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between text-sm gap-2">
+            <span className="font-semibold text-foreground truncate">{home}</span>
+            <span className="font-bold text-foreground tabular-nums">
+              {homeScore}
+            </span>
           </div>
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-semibold text-foreground">{away}</span>
-            <span className="font-bold text-foreground tabular-nums">{awayScore}</span>
+          <div className="flex items-center justify-between text-sm gap-2">
+            <span className="font-semibold text-foreground truncate">{away}</span>
+            <span className="font-bold text-foreground tabular-nums">
+              {awayScore}
+            </span>
           </div>
         </div>
         <div className="w-px h-8 bg-border" />
         <div className="flex flex-col items-end w-16 flex-shrink-0">
-          <span className="text-xs text-muted-foreground">
-            {userPrediction.homeScore}-{userPrediction.awayScore}
-          </span>
-          <span
-            className={cn(
-              'text-sm font-bold tabular-nums',
-              POINTS_COLOR[pointsTier(total)],
-            )}
-          >
-            {total > 0 ? `+${total}` : '0'}
-          </span>
+          {userPrediction ? (
+            <>
+              <span className="text-xs text-muted-foreground">
+                {userPrediction.homeScore}-{userPrediction.awayScore}
+              </span>
+              <span
+                className={cn(
+                  'text-sm font-bold tabular-nums',
+                  POINTS_COLOR[pointsTier(total)],
+                )}
+              >
+                {total > 0 ? `+${total}` : '0'}
+              </span>
+            </>
+          ) : (
+            <span className="text-xs text-muted-foreground/50">{'—'}</span>
+          )}
         </div>
       </div>
-    </div>
+    </Link>
   )
 }
 

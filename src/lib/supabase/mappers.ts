@@ -99,9 +99,19 @@ export function rowToMatch(row: MatchWithJoins): Match {
   }
 }
 
+// Predictions can be queried with or without the embedded `points` row.
+// When fetched via `select('*, points(*)')`, PostgREST returns either:
+//   - { ...prediction, points: { base_points, ... } }   (after finished)
+//   - { ...prediction, points: null }                   (still pending)
+// When fetched without the embed, `points` is undefined.
+type PredictionWithPointsEmbed = Tables['predictions']['Row'] & {
+  points?: Tables['points']['Row'] | null
+}
+
 export function rowToPrediction(
-  row: Tables['predictions']['Row'],
+  row: PredictionWithPointsEmbed | Tables['predictions']['Row'],
 ): Prediction {
+  const pointsRow = (row as PredictionWithPointsEmbed).points
   return {
     id: row.id,
     userId: row.user_id,
@@ -112,6 +122,23 @@ export function rowToPrediction(
     booster: row.booster as Booster | null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    storedPoints: pointsRow ? rowToPointsBreakdown(pointsRow) : null,
+  }
+}
+
+function rowToPointsBreakdown(row: Tables['points']['Row']) {
+  return {
+    base: row.base_points as 0 | 1 | 4,
+    outcomeBonus: row.outcome_bonus as 0 | 1 | 3,
+    exactBonus: row.exact_bonus as 0 | 1 | 3,
+    multiplier: row.booster_multiplier as 1 | 2 | 3 | 5,
+    total: row.total,
+    final: true,
+    memberCount: row.member_count,
+    sameOutcomeCount: row.same_outcome_count,
+    sameExactCount: row.same_exact_count,
+    outcomePct: Number(row.outcome_pct),
+    exactPct: Number(row.exact_pct),
   }
 }
 

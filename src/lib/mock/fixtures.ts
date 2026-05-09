@@ -379,6 +379,9 @@ function p(
     booster,
     createdAt: ts,
     updatedAt: ts,
+    // Mock fixtures don't materialize stored points; the mock derive
+    // recomputes from raw data each time, so this is always null.
+    storedPoints: null,
   }
 }
 

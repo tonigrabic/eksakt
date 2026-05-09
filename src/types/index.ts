@@ -138,10 +138,20 @@ export type Prediction = {
   booster: Booster | null
   createdAt: ISODateTime
   updatedAt: ISODateTime
+  // Server-persisted points if the linked match has finished. Set by
+  // the compute_points_for_match trigger; surfaced via the
+  // predictions→points embed in queries. Null while the match is still
+  // scheduled or live, OR briefly during the race window between a
+  // status flip to 'finished' and the trigger firing.
+  storedPoints: PointsBreakdown | null
 }
 
 // Final or in-progress points decomposition for a single prediction.
 // Mirrors the `points` table; `final` is true once the match is finished.
+// Audit fields (memberCount, sameOutcomeCount, sameExactCount,
+// outcomePct, exactPct) are populated only when the breakdown was
+// loaded from the persisted `points` row — not when computed live in
+// the UI.
 export type PointsBreakdown = {
   base: 0 | 1 | 4
   outcomeBonus: 0 | 1 | 3
@@ -149,6 +159,12 @@ export type PointsBreakdown = {
   multiplier: BoosterMultiplier
   total: number
   final: boolean
+  // Audit fields — present only on persisted points rows.
+  memberCount?: number
+  sameOutcomeCount?: number
+  sameExactCount?: number
+  outcomePct?: number
+  exactPct?: number
 }
 
 // Prediction enriched with predictor profile + computed points.
@@ -165,6 +181,11 @@ export type PredictionWithDetails = Prediction & {
 export type StandingRow = {
   position: number
   profile: Profile
+  // True when this row represents the currently-authenticated user.
+  // Set server-side so every UI consumer can highlight the user's row
+  // with a single boolean check instead of comparing display names
+  // (which collide for users named "You" or sharing a name).
+  isCurrentUser: boolean
   totalPoints: number // points from finished matches
   matchdayPoints: number // points from currently-live matches (provisional)
   exactScores: number // tiebreaker
@@ -201,6 +222,11 @@ export type LeagueDashboardSummary = {
   liveMatches: LiveMatchSummary[]
   upcomingMatches: UpcomingMatchSummary[]
   unpredictedCount: number
+  // Compact standings for the dashboard card: top 3 by combined points,
+  // plus the current user's row if they're outside the top 3. Empty for
+  // single-member leagues. Used to render a mini-table when the league
+  // has no live matches at the moment.
+  standingsPreview: StandingRow[]
 }
 
 // ── My Leagues screen ────────────────────────────────────────────────────────

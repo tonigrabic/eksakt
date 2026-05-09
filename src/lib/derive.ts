@@ -27,17 +27,36 @@ import { computePoints, computeRarity } from '@/lib/scoring'
 
 /**
  * Compute points for one prediction. Returns null if the match hasn't
- * started yet. For live matches this returns provisional points based
- * on the current score; for finished matches it's the final score.
+ * started yet.
+ *
+ * For finished matches, prefers the persisted `points` row (server-
+ * authoritative — the SQL trigger populated it with the canonical
+ * rarity numbers and audit data). Falls back to live recomputation if
+ * the row hasn't landed yet (race window, ~30s after status flip).
+ *
+ * For live matches, always recomputes from current score + peer picks.
+ * Live points are inherently provisional — peer predictions are locked
+ * but the score moves.
+ *
+ * `memberCount` is the league member count, which is the rarity
+ * denominator under the inclusive rule (members who didn't predict
+ * still count).
  */
 export function computePredictionPoints(
   prediction: Prediction,
   match: Match,
   peers: Prediction[],
+  memberCount: number,
 ): PointsBreakdown | null {
   if (match.status === 'scheduled') return null
+
+  // Server-stored points are the source of truth for finished matches.
+  if (match.status === 'finished' && prediction.storedPoints) {
+    return prediction.storedPoints
+  }
+
   if (match.homeScore === null || match.awayScore === null) return null
-  const rarity = computeRarity(prediction, peers)
+  const rarity = computeRarity(prediction, peers, memberCount)
   return computePoints({
     prediction,
     finalScore: { home: match.homeScore, away: match.awayScore },
@@ -89,6 +108,8 @@ export function boosterUsage(
  * league only — caller is responsible for filtering predictions to the
  * single `leagueId`.
  *
+ * `currentUserId` is used to flag the row that represents "me" so UI
+ * consumers can highlight it without name-based heuristics.
  * `beforeSnapshot` maps userId → position before today's live matches
  * began. If absent, positionChange is 0 for everyone.
  */
@@ -97,9 +118,17 @@ export function computeStandings(args: {
   matches: Match[]
   predictions: Prediction[]
   leaguePool: BoosterCounts
+  currentUserId?: UUID
   beforeSnapshot?: Record<UUID, number>
 }): StandingRow[] {
-  const { members, matches, predictions, leaguePool, beforeSnapshot } = args
+  const {
+    members,
+    matches,
+    predictions,
+    leaguePool,
+    currentUserId,
+    beforeSnapshot,
+  } = args
   const matchById = new Map(matches.map((m) => [m.id, m]))
   // Pre-bucket peers per match for O(1) rarity lookups.
   const peersByMatch = new Map<UUID, Prediction[]>()
@@ -121,7 +150,7 @@ export function computeStandings(args: {
       const match = matchById.get(p.matchId)
       if (!match) continue
       const peers = peersByMatch.get(p.matchId) ?? []
-      const pts = computePredictionPoints(p, match, peers)
+      const pts = computePredictionPoints(p, match, peers, members.length)
       if (!pts) continue
       if (match.status === 'finished') {
         totalPoints += pts.total
@@ -135,6 +164,7 @@ export function computeStandings(args: {
     return {
       position: 0,
       profile: m.profile,
+      isCurrentUser: m.userId === currentUserId,
       totalPoints,
       matchdayPoints,
       exactScores,
@@ -170,14 +200,15 @@ export function liveMatchSummary(args: {
   predictions: Prediction[]
   userId: UUID
   profileById: Map<UUID, Profile>
+  memberCount: number
 }): LiveMatchSummary {
-  const { match, predictions, userId, profileById } = args
+  const { match, predictions, userId, profileById, memberCount } = args
   const userPred = predictions.find((p) => p.userId === userId) ?? null
   return {
     match,
     predictionCount: predictions.length,
     userPrediction: userPred
-      ? toDetailed(userPred, match, predictions, profileById)
+      ? toDetailed(userPred, match, predictions, profileById, memberCount)
       : null,
   }
 }
@@ -197,13 +228,14 @@ export function completedMatchSummary(args: {
   predictions: Prediction[]
   userId: UUID
   profileById: Map<UUID, Profile>
+  memberCount: number
 }): CompletedMatchSummary {
-  const { match, predictions, userId, profileById } = args
+  const { match, predictions, userId, profileById, memberCount } = args
   const userPred = predictions.find((p) => p.userId === userId) ?? null
   return {
     match,
     userPrediction: userPred
-      ? toDetailed(userPred, match, predictions, profileById)
+      ? toDetailed(userPred, match, predictions, profileById, memberCount)
       : null,
   }
 }
@@ -213,13 +245,14 @@ function toDetailed(
   match: Match,
   peers: Prediction[],
   profileById: Map<UUID, Profile>,
+  memberCount: number,
 ): PredictionWithDetails {
   return {
     ...prediction,
     profile:
       profileById.get(prediction.userId) ??
       ({ id: prediction.userId, displayName: '?', avatarUrl: null } as Profile),
-    points: computePredictionPoints(prediction, match, peers),
+    points: computePredictionPoints(prediction, match, peers, memberCount),
   }
 }
 
@@ -232,8 +265,9 @@ export function buildBestScores(args: {
   match: Match
   peers: Prediction[]
   userPrediction: Prediction
+  memberCount: number
 }): BestScoreSuggestion[] {
-  const { match, peers, userPrediction } = args
+  const { match, peers, userPrediction, memberCount } = args
   if (match.homeScore === null || match.awayScore === null) return []
 
   const candidates: Array<{
@@ -248,7 +282,11 @@ export function buildBestScores(args: {
         awayScore: a,
         booster: userPrediction.booster,
       }
-      const rarity = computeRarity({ homeScore: h, awayScore: a }, peers)
+      const rarity = computeRarity(
+        { homeScore: h, awayScore: a },
+        peers,
+        memberCount,
+      )
       const pts = computePoints({
         prediction: hypothetical,
         finalScore: { home: match.homeScore, away: match.awayScore },

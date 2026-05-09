@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import {
   ArrowLeft,
+  ChevronDown,
   Circle,
   TrendingUp,
   TrendingDown,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
+import { useCurrentUser } from '@/hooks/use-current-user'
 import { useMatch } from '@/hooks/use-match'
 import { displayLiveMinute, pointsTier } from '@/lib/format'
 import type {
@@ -221,10 +223,18 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
 // ── Sub-components ───────────────────────────────────────────────────────────
 
 function PredictionRow({ prediction }: { prediction: PredictionWithDetails }) {
-  const isUser = prediction.profile.displayName === 'You'
-  const total = prediction.points?.total ?? 0
-  const base = prediction.points?.base ?? 0
+  const { data: currentUser } = useCurrentUser()
+  const isUser = prediction.userId === currentUser?.id
+  const points = prediction.points
+  const total = points?.total ?? 0
+  const base = points?.base ?? 0
   const booster = prediction.booster
+  // Audit fields are populated only on persisted points (i.e. after the
+  // SQL trigger fired on a finished match). Live matches show the
+  // expander button disabled / hidden.
+  const hasAudit = points?.memberCount != null
+  const [showAudit, setShowAudit] = useState(false)
+
   const boostBorder =
     booster === 'x5'
       ? 'border-l-amber-400'
@@ -245,7 +255,7 @@ function PredictionRow({ prediction }: { prediction: PredictionWithDetails }) {
   return (
     <div
       className={cn(
-        'flex items-center px-3 py-2.5 rounded-lg border-l-2 text-sm',
+        'rounded-lg border-l-2',
         'bg-card border border-border',
         boostBorder,
         boostBg,
@@ -253,45 +263,120 @@ function PredictionRow({ prediction }: { prediction: PredictionWithDetails }) {
         isUser && booster && 'bg-primary/5',
       )}
     >
-      <div className="flex-1 flex items-center gap-1.5 min-w-0">
-        <span
-          className={cn(
-            'font-medium truncate',
-            isUser ? 'text-primary' : 'text-foreground',
-          )}
-        >
-          {prediction.profile.displayName}
-        </span>
-        {booster && (
+      <div className="flex items-center px-3 py-2.5 text-sm">
+        <div className="flex-1 flex items-center gap-1.5 min-w-0">
           <span
             className={cn(
-              'flex-shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] font-black leading-tight',
-              booster === 'x5'
-                ? 'bg-amber-400/15 text-amber-400'
-                : booster === 'x3'
-                  ? 'bg-sky-400/15 text-sky-400'
-                  : 'bg-emerald-400/15 text-emerald-400',
+              'font-medium truncate',
+              isUser ? 'text-primary' : 'text-foreground',
             )}
           >
-            <Zap className="h-2 w-2" />
-            {booster}
+            {prediction.profile.displayName}
           </span>
+          {booster && (
+            <span
+              className={cn(
+                'flex-shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] font-black leading-tight',
+                booster === 'x5'
+                  ? 'bg-amber-400/15 text-amber-400'
+                  : booster === 'x3'
+                    ? 'bg-sky-400/15 text-sky-400'
+                    : 'bg-emerald-400/15 text-emerald-400',
+              )}
+            >
+              <Zap className="h-2 w-2" />
+              {booster}
+            </span>
+          )}
+        </div>
+        <span className="w-14 text-center font-mono font-bold text-foreground">
+          {prediction.homeScore}-{prediction.awayScore}
+        </span>
+        <span className="w-10 text-center text-muted-foreground tabular-nums">
+          {base}
+        </span>
+        <span
+          className={cn(
+            'w-14 text-right font-bold tabular-nums',
+            POINTS_COLOR[pointsTier(total)],
+          )}
+        >
+          {total > 0 ? `+${total}` : '0'}
+        </span>
+        {hasAudit ? (
+          <button
+            type="button"
+            onClick={() => setShowAudit((v) => !v)}
+            aria-label={showAudit ? 'Hide breakdown' : 'Show breakdown'}
+            className="ml-2 p-1 text-muted-foreground/60 hover:text-foreground transition-colors"
+          >
+            <ChevronDown
+              className={cn(
+                'h-3.5 w-3.5 transition-transform',
+                showAudit && 'rotate-180',
+              )}
+            />
+          </button>
+        ) : (
+          <span className="ml-2 w-5" />
         )}
       </div>
-      <span className="w-14 text-center font-mono font-bold text-foreground">
-        {prediction.homeScore}-{prediction.awayScore}
-      </span>
-      <span className="w-10 text-center text-muted-foreground tabular-nums">
-        {base}
-      </span>
-      <span
-        className={cn(
-          'w-14 text-right font-bold tabular-nums',
-          POINTS_COLOR[pointsTier(total)],
-        )}
-      >
-        {total > 0 ? `+${total}` : '0'}
-      </span>
+      {showAudit && hasAudit && points && <PredictionAudit points={points} />}
+    </div>
+  )
+}
+
+function PredictionAudit({ points }: { points: NonNullable<PredictionWithDetails['points']> }) {
+  // points fields are guaranteed defined here because hasAudit gated rendering
+  const memberCount = points.memberCount ?? 0
+  const sameOutcome = points.sameOutcomeCount ?? 0
+  const sameExact = points.sameExactCount ?? 0
+  const outcomePct = points.outcomePct ?? 0
+  const exactPct = points.exactPct ?? 0
+
+  return (
+    <div className="border-t border-border/50 px-3 py-2 text-[11px] text-muted-foreground space-y-1.5 bg-secondary/20 rounded-b-lg">
+      <Row
+        label={
+          points.base === 4
+            ? 'Exact score'
+            : points.base === 1
+              ? 'Correct outcome'
+              : 'Wrong outcome'
+        }
+        value={`${points.base} pt${points.base === 1 ? '' : 's'}`}
+      />
+      {points.outcomeBonus > 0 && (
+        <Row
+          label={`Outcome rarity (${sameOutcome} of ${memberCount} = ${outcomePct.toFixed(1)}%)`}
+          value={`+${points.outcomeBonus}`}
+        />
+      )}
+      {points.exactBonus > 0 && (
+        <Row
+          label={`Exact rarity (${sameExact} of ${memberCount} = ${exactPct.toFixed(1)}%)`}
+          value={`+${points.exactBonus}`}
+        />
+      )}
+      {points.multiplier > 1 && (
+        <Row
+          label={`Booster ×${points.multiplier}`}
+          value={`× ${points.multiplier}`}
+        />
+      )}
+      <div className="border-t border-border/50 mt-1.5 pt-1.5 flex justify-between font-bold text-foreground">
+        <span>{'Total'}</span>
+        <span className="tabular-nums">{points.total}</span>
+      </div>
+    </div>
+  )
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span>{label}</span>
+      <span className="tabular-nums font-mono text-foreground/80">{value}</span>
     </div>
   )
 }
@@ -338,7 +423,7 @@ function BestScoreCard({ suggestion }: { suggestion: BestScoreSuggestion }) {
 }
 
 function StandingCardRow({ row }: { row: StandingRow }) {
-  const isUser = row.profile.displayName === 'You'
+  const isUser = row.isCurrentUser
   return (
     <Card
       className={cn(
@@ -379,7 +464,7 @@ function StandingCardRow({ row }: { row: StandingRow }) {
             row.matchdayPoints > 0 ? 'text-primary' : 'text-muted-foreground/40',
           )}
         >
-          {row.matchdayPoints > 0 ? `+${row.matchdayPoints}` : '0'}
+          {row.matchdayPoints > 0 ? `+${row.matchdayPoints}` : '—'}
         </span>
         <span className="w-14 text-right font-bold text-foreground tabular-nums">
           {row.totalPoints + row.matchdayPoints}

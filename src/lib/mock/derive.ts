@@ -74,7 +74,8 @@ function computePredictionPoints(
   if (match.homeScore === null || match.awayScore === null) return null
 
   const peers = predictionsForMatchAndLeague(match.id, prediction.leagueId)
-  const rarity = computeRarity(prediction, peers)
+  const memberCount = (leagueMembers[prediction.leagueId] ?? []).length
+  const rarity = computeRarity(prediction, peers, memberCount)
   return computePoints({
     prediction,
     finalScore: { home: match.homeScore, away: match.awayScore },
@@ -134,6 +135,7 @@ export function computeStandings(leagueId: UUID): StandingRow[] {
     return {
       position: 0, // filled below
       profile: m.profile,
+      isCurrentUser: m.userId === CURRENT_USER_ID,
       totalPoints,
       matchdayPoints,
       exactScores,
@@ -264,6 +266,11 @@ export function buildDashboard(userId: UUID = CURRENT_USER_ID): LeagueDashboardS
       (u) => u.userPrediction === null,
     ).length
 
+    const top3 = standings.slice(0, 3)
+    const userInTop3 = userRow ? top3.includes(userRow) : false
+    const standingsPreview =
+      userRow && !userInTop3 ? [...top3, userRow] : top3
+
     summaries.push({
       league,
       userPosition: userRow?.position ?? standings.length + 1,
@@ -275,6 +282,7 @@ export function buildDashboard(userId: UUID = CURRENT_USER_ID): LeagueDashboardS
       liveMatches: liveSummaries,
       upcomingMatches: upcomingSummaries,
       unpredictedCount,
+      standingsPreview,
     })
   }
   return summaries
@@ -377,7 +385,9 @@ export function buildMatchDetail(
     league: { id: league.id, name: league.name },
     predictions: detailed,
     userPrediction: userPred,
-    bestScoresForUser: isLocked ? buildBestScoresForUser(match, peers, userId) : [],
+    bestScoresForUser: isLocked
+      ? buildBestScoresForUser(match, peers, userId, leagueId)
+      : [],
     standings: computeStandings(leagueId),
   }
 }
@@ -440,11 +450,13 @@ function buildBestScoresForUser(
   match: Match,
   peers: Prediction[],
   userId: UUID,
+  leagueId: UUID,
 ): BestScoreSuggestion[] {
   if (match.homeScore === null || match.awayScore === null) return []
   const userPred = peers.find((p) => p.userId === userId)
   if (!userPred) return []
 
+  const memberCount = (leagueMembers[leagueId] ?? []).length
   const candidates: Array<{ home: number; away: number; pts: PointsBreakdown }> =
     []
 
@@ -456,7 +468,11 @@ function buildBestScoresForUser(
         awayScore: a,
         booster: userPred.booster,
       }
-      const rarity = computeRarity({ homeScore: h, awayScore: a }, peers)
+      const rarity = computeRarity(
+        { homeScore: h, awayScore: a },
+        peers,
+        memberCount,
+      )
       const pts = computePoints({
         prediction: hypothetical,
         finalScore: { home: match.homeScore, away: match.awayScore },

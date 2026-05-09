@@ -306,9 +306,14 @@ export type Database = {
           booster_multiplier: number
           created_at: string
           exact_bonus: number
+          exact_pct: number
           id: string
+          member_count: number
           outcome_bonus: number
+          outcome_pct: number
           prediction_id: string
+          same_exact_count: number
+          same_outcome_count: number
           total: number
         }
         Insert: {
@@ -316,9 +321,14 @@ export type Database = {
           booster_multiplier: number
           created_at?: string
           exact_bonus: number
+          exact_pct?: number
           id?: string
+          member_count?: number
           outcome_bonus: number
+          outcome_pct?: number
           prediction_id: string
+          same_exact_count?: number
+          same_outcome_count?: number
           total: number
         }
         Update: {
@@ -326,9 +336,14 @@ export type Database = {
           booster_multiplier?: number
           created_at?: string
           exact_bonus?: number
+          exact_pct?: number
           id?: string
+          member_count?: number
           outcome_bonus?: number
+          outcome_pct?: number
           prediction_id?: string
+          same_exact_count?: number
+          same_outcome_count?: number
           total?: number
         }
         Relationships: [

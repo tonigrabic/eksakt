@@ -18,7 +18,11 @@ import { ScreenHeader } from '@/components/screen-header'
 import { CreateOrJoinLeague } from '@/components/create-or-join-league'
 import { useDashboard } from '@/hooks/use-dashboard'
 import { displayLiveMinute, positionLabel } from '@/lib/format'
-import type { LeagueDashboardSummary, LiveMatchSummary } from '@/types'
+import type {
+  LeagueDashboardSummary,
+  LiveMatchSummary,
+  StandingRow,
+} from '@/types'
 
 export function DashboardScreen() {
   const { openPrediction } = usePrediction()
@@ -117,6 +121,11 @@ function DashboardLeagueCard({
           ))}
         </div>
       )}
+      {summary.standingsPreview.length > 0 && (
+        <div className="mx-4 mb-3 rounded-lg bg-secondary/40 overflow-hidden">
+          <DashboardStandingsPreview rows={summary.standingsPreview} />
+        </div>
+      )}
 
       <div className="px-4 pb-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -211,6 +220,70 @@ function DashboardLiveMatchRow({
           </span>
         </div>
       </div>
+    </div>
+  )
+}
+
+// Compact standings preview for the no-live state of a dashboard card.
+// Receives top 3 + (optionally) the user's own row when they're outside
+// the top 3 — we render an ellipsis row between rank 3 and the user's
+// row to make the gap visible.
+function DashboardStandingsPreview({ rows }: { rows: StandingRow[] }) {
+  return (
+    <div className="divide-y divide-border/40">
+      {rows.map((row, idx) => {
+        const prev = rows[idx - 1]
+        const isGap = prev && row.position - prev.position > 1
+        return (
+          <div key={row.profile.id}>
+            {isGap && (
+              <div className="px-3 py-1 text-center text-[10px] text-muted-foreground/50 tracking-widest">
+                {'…'}
+              </div>
+            )}
+            <DashboardStandingsRow row={row} />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function DashboardStandingsRow({ row }: { row: StandingRow }) {
+  const isUser = row.isCurrentUser
+  const total = row.totalPoints + row.matchdayPoints
+  const liveDelta = row.matchdayPoints
+  return (
+    <div
+      className={cn(
+        'flex items-center px-3 py-2 text-sm gap-2',
+        isUser && 'bg-primary/5',
+      )}
+    >
+      <span
+        className={cn(
+          'w-5 text-center font-bold text-xs tabular-nums',
+          row.position === 1 && 'text-primary',
+          row.position > 3 && 'text-muted-foreground',
+        )}
+      >
+        {row.position}
+      </span>
+      <span
+        className={cn(
+          'flex-1 truncate font-medium',
+          isUser ? 'text-primary' : 'text-foreground',
+        )}
+      >
+        {row.profile.displayName}
+      </span>
+      {liveDelta > 0 && (
+        <span className="text-[10px] font-bold text-primary tabular-nums">
+          {`+${liveDelta}`}
+        </span>
+      )}
+      <span className="font-bold text-foreground tabular-nums">{total}</span>
+      <span className="text-[10px] text-muted-foreground">{'pts'}</span>
     </div>
   )
 }

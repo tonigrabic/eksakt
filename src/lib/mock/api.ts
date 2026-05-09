@@ -117,6 +117,7 @@ export async function submitPrediction(
       booster: input.booster,
       createdAt: ts,
       updatedAt: ts,
+      storedPoints: null,
     })
   }
   return delay(undefined)

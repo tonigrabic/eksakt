@@ -31,13 +31,19 @@ export type PredictionRarity = {
   exactPercent: number
 }
 
-// Rarity is "how many predicted the SAME outcome / score as me", not the
-// final outcome — that drives the contrarian-bonus mechanic.
+// Rarity is "how many predicted the SAME outcome / score as me", relative
+// to the total number of league members (not just predictors). Members
+// who didn't submit a pick still count toward the denominator — they're
+// implicitly "wrong" and rarity dilutes accordingly.
+//
+// Mirrors compute_points_for_match in 00014_inclusive_rarity_and_audit.sql.
+// If you change this rule, change both files together.
 export function computeRarity(
   prediction: Pick<Prediction, 'homeScore' | 'awayScore'>,
   allPredictions: ReadonlyArray<Pick<Prediction, 'homeScore' | 'awayScore'>>,
+  memberCount: number,
 ): PredictionRarity {
-  if (allPredictions.length === 0) {
+  if (memberCount === 0) {
     return { outcomePercent: 0, exactPercent: 0 }
   }
   const myOut = outcome({ home: prediction.homeScore, away: prediction.awayScore })
@@ -54,10 +60,9 @@ export function computeRarity(
       sameExact++
     }
   }
-  const total = allPredictions.length
   return {
-    outcomePercent: (sameOutcome / total) * 100,
-    exactPercent: (sameExact / total) * 100,
+    outcomePercent: (sameOutcome / memberCount) * 100,
+    exactPercent: (sameExact / memberCount) * 100,
   }
 }
 
