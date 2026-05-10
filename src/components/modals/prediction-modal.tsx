@@ -269,14 +269,17 @@ function PredictionForm({
     }
   }
 
+  // Per-league is the default — quick-predict is the shortcut for "same
+  // score everywhere", but per-league is the canonical action (different
+  // position context, different boosters per pool).
   return (
-    <Tabs defaultValue="quick" className="w-full">
+    <Tabs defaultValue="custom" className="w-full">
       <TabsList className="grid w-full grid-cols-2 h-9">
-        <TabsTrigger value="quick" className="text-xs">
-          {'Quick Predict'}
-        </TabsTrigger>
         <TabsTrigger value="custom" className="text-xs">
           {'Per League'}
+        </TabsTrigger>
+        <TabsTrigger value="quick" className="text-xs">
+          {'Quick Predict'}
         </TabsTrigger>
       </TabsList>
 

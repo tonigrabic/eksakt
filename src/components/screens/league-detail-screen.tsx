@@ -376,34 +376,50 @@ function UpcomingSection({
 
       <div className="space-y-5">
         {visibleDays.map((day) => {
-          const compBuckets = bucketByCompetition(day.matches, compNameById)
+          // Pure chronological order within the day; competition shown as
+          // a chip on each card instead of grouping.
+          const sorted = [...day.matches].sort((a, b) =>
+            a.match.kickoffTime.localeCompare(b.match.kickoffTime),
+          )
+          const dayLabel = formatDayLabel(day.date)
+          // Highlight TODAY/TOMORROW with primary color; less imminent
+          // future days get a muted treatment so the eye lands on
+          // what's actually relevant right now.
+          const isImminent = dayLabel === 'TODAY' || dayLabel === 'TOMORROW'
+
           return (
-            <div key={day.key} className="space-y-2">
-              {/* Sticky day label — sits below the page header. */}
-              <div className="sticky top-[3.25rem] z-[5] -mx-4 px-4 py-1.5 bg-background/95 backdrop-blur-sm">
-                <h3 className="text-[11px] font-bold text-foreground uppercase tracking-wider">
-                  {formatDayLabel(day.date)}
-                </h3>
+            <div key={day.key} className="space-y-3">
+              <div className="sticky top-[4.5rem] z-[5] -mx-4 px-4 py-2.5 bg-background/95 backdrop-blur-sm">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-px bg-border/50" />
+                  <h3
+                    className={cn(
+                      'inline-flex items-center px-3 py-1 rounded-full',
+                      'text-xs font-bold uppercase tracking-[0.15em]',
+                      'border',
+                      isImminent
+                        ? 'bg-primary/15 text-primary border-primary/30'
+                        : 'bg-secondary text-foreground border-border',
+                    )}
+                  >
+                    {dayLabel}
+                  </h3>
+                  <div className="flex-1 h-px bg-border/50" />
+                </div>
               </div>
 
               <div className="space-y-3">
-                {compBuckets.map((comp) => (
-                  <div key={comp.competitionId} className="space-y-2">
-                    {showCompHeader && (
-                      <h4 className="text-[11px] font-medium text-muted-foreground tracking-wide px-1">
-                        {comp.name}
-                      </h4>
-                    )}
-                    <div className="space-y-3">
-                      {comp.matches.map((u) => (
-                        <UpcomingMatchCard
-                          key={u.match.id}
-                          summary={u}
-                          onPredict={() => onPredict(u.match.id)}
-                        />
-                      ))}
-                    </div>
-                  </div>
+                {sorted.map((u) => (
+                  <UpcomingMatchCard
+                    key={u.match.id}
+                    summary={u}
+                    competitionName={
+                      showCompHeader
+                        ? compNameById.get(u.match.competitionId) ?? null
+                        : null
+                    }
+                    onPredict={() => onPredict(u.match.id)}
+                  />
                 ))}
               </div>
             </div>
@@ -953,24 +969,102 @@ function CompletedMatchRow({
 }
 
 // ── Upcoming match card ──────────────────────────────────────────────────────
+//
+// Visual rules:
+//   • Chip top-left: competition name (only when league tracks multiple)
+//     and round name
+//   • Time top-right: gets red/urgent treatment when match is < 2h away
+//     AND user hasn't predicted yet (drives them to predict NOW)
+//   • Booster color: card border + background tinted to the booster color
+//     when the user's prediction has a booster applied. Mirrors the
+//     treatment on live-match prediction rows.
+//   • Predicted state: large prediction badge + bold Edit button (high
+//     visibility — you should always know if you've already picked).
+//   • Unpredicted state: full-width primary CTA.
+
+const URGENT_KICKOFF_MIN = 2 * 60 // 2 hours
+
+const BOOSTER_CARD_STYLES: Record<
+  Exclude<NonNullable<UpcomingMatchSummary['userPrediction']>['booster'], null>,
+  { border: string; bg: string; pillBg: string; pillText: string }
+> = {
+  x2: {
+    border: 'border-emerald-400/50',
+    bg: 'bg-emerald-400/[0.03]',
+    pillBg: 'bg-emerald-400/15',
+    pillText: 'text-emerald-400',
+  },
+  x3: {
+    border: 'border-sky-400/50',
+    bg: 'bg-sky-400/[0.03]',
+    pillBg: 'bg-sky-400/15',
+    pillText: 'text-sky-400',
+  },
+  x5: {
+    border: 'border-amber-400/50',
+    bg: 'bg-amber-400/[0.03]',
+    pillBg: 'bg-amber-400/15',
+    pillText: 'text-amber-400',
+  },
+}
 
 function UpcomingMatchCard({
   summary,
+  competitionName,
   onPredict,
 }: {
   summary: UpcomingMatchSummary
+  competitionName: string | null
   onPredict: () => void
 }) {
   const { match, userPrediction } = summary
   const home = match.homeTeam?.name ?? 'TBD'
   const away = match.awayTeam?.name ?? 'TBD'
+
+  // Capture wall-time once at mount. Re-evaluated on every TanStack
+  // refetch (default staleTime 30s) which is plenty fresh for the
+  // "urgent" threshold; we don't need a per-second ticker.
+  const [now] = useState(() => Date.now())
+  const minutesToKickoff =
+    (new Date(match.kickoffTime).getTime() - now) / 60_000
+  const isUrgent =
+    !userPrediction &&
+    minutesToKickoff > 0 &&
+    minutesToKickoff < URGENT_KICKOFF_MIN
+
+  const booster = userPrediction?.booster ?? null
+  const boostStyle = booster ? BOOSTER_CARD_STYLES[booster] : null
+
   return (
-    <Card className="p-4 bg-card border-border">
-      <div className="flex items-center justify-between mb-2">
-        <Badge variant="secondary" className="text-xs">{match.round.name}</Badge>
-        <div className="flex items-center gap-1 text-muted-foreground">
-          <Clock className="h-3 w-3" />
-          <span className="text-xs font-medium">
+    <Card
+      className={cn(
+        'p-4 bg-card border-border transition-colors',
+        boostStyle && [boostStyle.border, boostStyle.bg],
+      )}
+    >
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          {competitionName && (
+            <Badge variant="secondary" className="text-[10px] flex-shrink-0">
+              {competitionName}
+            </Badge>
+          )}
+          <Badge variant="secondary" className="text-[10px] truncate">
+            {match.round.name}
+          </Badge>
+        </div>
+        <div
+          className={cn(
+            'flex items-center gap-1 flex-shrink-0',
+            isUrgent
+              ? 'text-destructive font-bold animate-pulse'
+              : 'text-muted-foreground',
+          )}
+        >
+          <Clock className={cn('h-3 w-3', isUrgent && 'h-3.5 w-3.5')} />
+          <span
+            className={cn('font-medium', isUrgent ? 'text-sm' : 'text-xs')}
+          >
             {formatKickoff(match.kickoffTime)}
           </span>
         </div>
@@ -983,24 +1077,46 @@ function UpcomingMatchCard({
       </div>
 
       {userPrediction ? (
-        <div className="flex items-center justify-between pt-3 border-t border-border">
-          <span className="text-xs text-muted-foreground">{'Your prediction'}</span>
-          <button
-            onClick={onPredict}
-            className="flex items-center gap-2"
-          >
-            <Badge
-              variant="outline"
-              className="bg-primary/10 text-primary border-primary/20 font-mono font-bold"
-            >
+        <button
+          type="button"
+          onClick={onPredict}
+          className={cn(
+            'w-full pt-3 border-t border-border/60 flex items-center justify-between gap-3 group',
+            'rounded-b -mx-4 px-4 -mb-4 pb-4 hover:bg-muted/30 transition-colors',
+          )}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
+              {'Your pick'}
+            </span>
+            <span className="font-mono font-bold text-lg tabular-nums text-foreground">
               {userPrediction.homeScore}-{userPrediction.awayScore}
-            </Badge>
-            <span className="text-xs text-muted-foreground hover:text-primary">{'Edit'}</span>
-          </button>
-        </div>
+            </span>
+            {booster && boostStyle && (
+              <span
+                className={cn(
+                  'inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[10px] font-black leading-tight',
+                  boostStyle.pillBg,
+                  boostStyle.pillText,
+                )}
+              >
+                <Zap className="h-2.5 w-2.5" />
+                {booster}
+              </span>
+            )}
+          </div>
+          <span className="flex items-center gap-1 text-xs font-semibold text-primary group-hover:underline flex-shrink-0">
+            {'Edit'}
+            <ChevronRight className="h-3.5 w-3.5" />
+          </span>
+        </button>
       ) : (
-        <Button className="w-full mt-1" onClick={onPredict}>
-          {'Make Prediction'}
+        <Button
+          variant={isUrgent ? 'destructive' : 'default'}
+          className="w-full mt-1"
+          onClick={onPredict}
+        >
+          {isUrgent ? 'Predict now' : 'Make Prediction'}
           <ChevronRight className="h-4 w-4 ml-1" />
         </Button>
       )}
