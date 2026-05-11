@@ -20,14 +20,18 @@ import {
   Check,
   Copy,
   Plus,
+  Shield,
   Trophy,
+  UserMinus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useLeagueDetail } from '@/hooks/use-league-detail'
 import { useCompetitions } from '@/hooks/use-competitions'
 import { useAddLeagueCompetition } from '@/hooks/use-add-league-competition'
 import { useUpdateLeague } from '@/hooks/use-update-league'
-import type { Competition, League, UUID } from '@/types'
+import { useRemoveLeagueMember } from '@/hooks/use-remove-league-member'
+import { useCurrentUser } from '@/hooks/use-current-user'
+import type { Competition, League, LeagueMember, UUID } from '@/types'
 
 interface Props {
   leagueId: UUID
@@ -45,7 +49,7 @@ export function LeagueSettingsScreen({ leagueId }: Props) {
     )
   }
 
-  const { league, isAdmin } = data
+  const { league, isAdmin, members } = data
 
   // Non-admins shouldn't be on this page. Bounce them back. Defensive —
   // the gear icon is only shown to admins, but the route is reachable
@@ -85,8 +89,161 @@ export function LeagueSettingsScreen({ leagueId }: Props) {
         <LeagueInfoSection league={league} />
         <CompetitionsSection league={league} />
         <InviteCodeSection league={league} />
+        <MembersSection league={league} members={members} />
       </div>
     </div>
+  )
+}
+
+// ── Members (admin) ─────────────────────────────────────────────────────────
+
+function MembersSection({
+  league,
+  members,
+}: {
+  league: League
+  members: LeagueMember[]
+}) {
+  const { data: currentUser } = useCurrentUser()
+  const remove = useRemoveLeagueMember(league.id)
+  const [confirming, setConfirming] = useState<LeagueMember | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  // Sort: admins first, then alphabetical. Caller's row is visually
+  // marked but not pinned — admins typically want to scan the roster
+  // for a specific person to remove.
+  const sorted = [...members].sort((a, b) => {
+    if (a.role !== b.role) return a.role === 'admin' ? -1 : 1
+    return a.profile.displayName.localeCompare(b.profile.displayName)
+  })
+
+  const handleConfirm = async () => {
+    if (!confirming) return
+    setError(null)
+    try {
+      await remove.mutateAsync({
+        leagueId: league.id,
+        userId: confirming.userId,
+      })
+      setConfirming(null)
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }
+
+  return (
+    <section className="space-y-2">
+      <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+        {members.length === 1 ? 'Member' : 'Members'}
+        <span className="ml-1 font-normal text-muted-foreground/70">
+          ({members.length})
+        </span>
+      </h2>
+      <Card className="bg-card border-border overflow-hidden divide-y divide-border/30">
+        {sorted.map((m) => {
+          const isYou = m.userId === currentUser?.id
+          const isAdmin = m.role === 'admin'
+          const canRemove = !isAdmin && !isYou
+          return (
+            <div
+              key={m.userId}
+              className="flex items-center gap-3 px-4 py-2.5"
+            >
+              <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">
+                {m.profile.displayName.slice(0, 1).toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-foreground truncate">
+                  {m.profile.displayName}
+                  {isYou && (
+                    <span className="ml-1.5 text-[10px] text-muted-foreground font-normal">
+                      {'(you)'}
+                    </span>
+                  )}
+                </div>
+                {isAdmin && (
+                  <div className="text-[11px] text-primary flex items-center gap-1 mt-0.5">
+                    <Shield className="h-3 w-3" />
+                    {'Admin'}
+                  </div>
+                )}
+              </div>
+              {canRemove && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => {
+                    setError(null)
+                    setConfirming(m)
+                  }}
+                >
+                  <UserMinus className="h-3.5 w-3.5 mr-1" />
+                  {'Remove'}
+                </Button>
+              )}
+            </div>
+          )
+        })}
+      </Card>
+      <p className="text-[11px] text-muted-foreground">
+        {'Removed members lose access to the league. Their past predictions stay on record for fairness in the standings.'}
+      </p>
+
+      <Dialog
+        open={confirming !== null}
+        onOpenChange={(next) => {
+          if (!next) {
+            setConfirming(null)
+            setError(null)
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{'Remove member?'}</DialogTitle>
+            <DialogDescription>
+              {confirming && (
+                <>
+                  <span className="font-semibold text-foreground">
+                    {confirming.profile.displayName}
+                  </span>
+                  {' will lose access to '}
+                  <span className="font-semibold text-foreground">
+                    {league.name}
+                  </span>
+                  {'. They can rejoin later with the invite code.'}
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {error && (
+            <div className="flex items-start gap-2 rounded-md bg-destructive/10 border border-destructive/30 p-2.5 text-xs text-destructive">
+              <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="ghost"
+              onClick={() => setConfirming(null)}
+              disabled={remove.isPending}
+            >
+              {'Cancel'}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirm}
+              disabled={remove.isPending}
+            >
+              {remove.isPending ? 'Removing…' : 'Remove'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </section>
   )
 }
 

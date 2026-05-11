@@ -11,18 +11,121 @@ import {
   ChevronRight,
   Circle,
   Zap,
+  Plus,
+  Hash,
+  Target,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePrediction } from '@/components/prediction-provider'
 import { ScreenHeader } from '@/components/screen-header'
 import { CreateOrJoinLeague } from '@/components/create-or-join-league'
+import { HelpDialog } from '@/components/help-dialog'
 import { useDashboard } from '@/hooks/use-dashboard'
-import { displayLiveMinute, positionLabel } from '@/lib/format'
+import { useLiveMinute } from '@/hooks/use-live-minute'
+import { positionLabel } from '@/lib/format'
 import type {
   LeagueDashboardSummary,
   LiveMatchSummary,
   StandingRow,
 } from '@/types'
+
+function WelcomeEmptyState() {
+  return (
+    <div className="space-y-4">
+      <Card className="p-6 bg-card border-border">
+        <div className="flex items-center gap-3 mb-1">
+          <div className="h-10 w-10 rounded-lg bg-primary/15 flex items-center justify-center">
+            <Trophy className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold text-foreground">
+              {'Welcome to Eksakt'}
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {'Predict the exact score. Beat your friends.'}
+            </p>
+          </div>
+        </div>
+
+        <ol className="mt-4 space-y-3">
+          <WelcomeStep
+            n={1}
+            icon={<Plus className="h-3.5 w-3.5" />}
+            title="Create a league"
+            body="Pick a competition, name your league, invite your friends with the auto-generated code."
+          />
+          <WelcomeStep
+            n={2}
+            icon={<Hash className="h-3.5 w-3.5" />}
+            title="Or join with a code"
+            body="Have a code from a friend? Tap Join below — you’ll be in the league immediately."
+          />
+          <WelcomeStep
+            n={3}
+            icon={<Target className="h-3.5 w-3.5" />}
+            title="Predict scores before kickoff"
+            body="Everyone’s picks stay hidden until the match starts. Points roll in live."
+          />
+        </ol>
+
+        <div className="mt-5 rounded-lg border border-border bg-secondary/30 p-3 space-y-1.5 text-xs">
+          <div className="text-foreground font-semibold uppercase tracking-wider text-[10px] mb-1.5">
+            {'Scoring'}
+          </div>
+          <ScoringRow label="Correct outcome (W / D / L)" value="1 pt" />
+          <ScoringRow label="Exact score" value="+3 pts" />
+          <ScoringRow label="Lone or rare outcome (<5%)" value="+3 pts" />
+          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground pt-1">
+            <Zap className="h-3 w-3 text-primary" />
+            <span>{'Boosters (×2 / ×3 / ×5) multiply the match total.'}</span>
+          </div>
+        </div>
+
+        <div className="mt-5">
+          <CreateOrJoinLeague />
+        </div>
+      </Card>
+    </div>
+  )
+}
+
+function ScoringRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-muted-foreground">
+      <span>{label}</span>
+      <span className="font-mono font-bold text-foreground">{value}</span>
+    </div>
+  )
+}
+
+function WelcomeStep({
+  n,
+  icon,
+  title,
+  body,
+}: {
+  n: number
+  icon: React.ReactNode
+  title: string
+  body: string
+}) {
+  return (
+    <li className="flex gap-3">
+      <div className="relative h-7 w-7 rounded-full bg-secondary text-muted-foreground flex items-center justify-center flex-shrink-0 mt-0.5">
+        {icon}
+        <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center">
+          {n}
+        </span>
+      </div>
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-foreground">{title}</div>
+        <div className="text-xs text-muted-foreground leading-relaxed">
+          {body}
+        </div>
+      </div>
+    </li>
+  )
+}
 
 export function DashboardScreen() {
   const { openPrediction } = usePrediction()
@@ -30,20 +133,17 @@ export function DashboardScreen() {
 
   return (
     <>
-      <ScreenHeader title="Eksakt" subtitle="Your leagues and live matches" />
+      <ScreenHeader
+        title="Eksakt"
+        subtitle="Your leagues and live matches"
+        action={<HelpDialog />}
+      />
 
       <div className="max-w-2xl mx-auto px-4 py-4 space-y-4">
         {isLoading || !data ? (
           <p className="text-center text-sm text-muted-foreground py-12">{'Loading…'}</p>
         ) : data.length === 0 ? (
-          <Card className="p-8 text-center bg-card border-border">
-            <Trophy className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
-            <p className="text-sm font-semibold text-foreground">{'No active leagues yet'}</p>
-            <p className="text-xs text-muted-foreground mt-1 mb-4">
-              {'Create one or join with an invite code to start predicting.'}
-            </p>
-            <CreateOrJoinLeague />
-          </Card>
+          <WelcomeEmptyState />
         ) : (
           data.map((summary) => (
             <DashboardLeagueCard
@@ -176,6 +276,7 @@ function DashboardLiveMatchRow({
   const predLabel = userPrediction
     ? `${userPrediction.homeScore}-${userPrediction.awayScore}`
     : '—'
+  const liveMinute = useLiveMinute(match.liveMinute, match.status, match.kickoffTime)
 
   return (
     <div
@@ -185,7 +286,7 @@ function DashboardLiveMatchRow({
       )}
     >
       <span className="text-xs font-mono text-destructive font-semibold w-10 flex-shrink-0">
-        {displayLiveMinute(match.liveMinute, match.status, match.kickoffTime) ?? 'LIVE'}
+        {liveMinute ?? 'LIVE'}
       </span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between text-sm">

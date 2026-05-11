@@ -352,6 +352,7 @@ export function buildLeagueDetail(
   return {
     league,
     isAdmin,
+    members: leagueMembers[leagueId] ?? [],
     standings: computeStandings(leagueId),
     liveMatches: live.map((m) => liveMatchSummary(m, leagueId, userId)),
     upcomingMatches: upcoming.map((m) => upcomingMatchSummary(m, leagueId, userId)),

@@ -551,6 +551,10 @@ export type Database = {
         }[]
       }
       match_has_kicked_off: { Args: { p_match_id: string }; Returns: boolean }
+      remove_league_member: {
+        Args: { p_league_id: string; p_user_id: string }
+        Returns: undefined
+      }
       rarity_bonus: {
         Args: { p_matching_count: number; p_total_count: number }
         Returns: number

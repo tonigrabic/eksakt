@@ -259,12 +259,20 @@ export type LeagueDetailPayload = {
   // RLS still enforces auth on the actual mutation; this just hides
   // buttons that would otherwise error.
   isAdmin: boolean
+  // Roster — used by the settings screen for the kick flow. Includes
+  // the caller's own row so the UI can mark "you" and prevent self-kick.
+  members: LeagueMember[]
   standings: StandingRow[]
   liveMatches: LiveMatchSummary[]
   upcomingMatches: UpcomingMatchSummary[]
   completedMatches: CompletedMatchSummary[]
   // For live matches, the full predictions table is returned by useMatch().
   // League detail only renders headline info; the inline expand uses useMatch.
+}
+
+export type RemoveLeagueMemberInput = {
+  leagueId: UUID
+  userId: UUID
 }
 
 // ── Match deep view (live or finished) ───────────────────────────────────────

@@ -20,7 +20,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import { useMatch } from '@/hooks/use-match'
-import { displayLiveMinute, pointsTier } from '@/lib/format'
+import { useRealtimeMatch } from '@/hooks/use-realtime-match'
+import { useLiveMinute } from '@/hooks/use-live-minute'
+import { AnimatedScore } from '@/components/animated-score'
+import { pointsTier } from '@/lib/format'
 import type {
   BestScoreSuggestion,
   PredictionWithDetails,
@@ -44,6 +47,19 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
   const router = useRouter()
   const { data, isLoading } = useMatch(matchId, leagueId)
   const [activeTab, setActiveTab] = useState('predictions')
+
+  // Push score / status updates from the sync-live-matches edge function
+  // into the cache the moment they hit Postgres. Skipped for finished
+  // matches — nothing more is coming.
+  useRealtimeMatch(data?.match.status === 'finished' ? null : matchId, leagueId)
+
+  // Hooks must be called unconditionally; tolerate undefined inputs
+  // while the match payload is loading.
+  const liveMinute = useLiveMinute(
+    data?.match.liveMinute,
+    data?.match.status,
+    data?.match.kickoffTime,
+  )
 
   if (isLoading || !data) {
     return (
@@ -77,7 +93,7 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
             {match.status === 'live' ? (
               <Badge variant="destructive" className="gap-1 text-xs">
                 <Circle className="h-1.5 w-1.5 fill-current animate-pulse" />
-                {displayLiveMinute(match.liveMinute, match.status, match.kickoffTime) ?? 'LIVE'}
+                {liveMinute ?? 'LIVE'}
               </Badge>
             ) : match.status === 'finished' ? (
               <Badge variant="secondary" className="text-xs">{'Full Time'}</Badge>
@@ -91,13 +107,15 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
               <div className="text-base font-bold text-foreground">{home}</div>
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-4xl font-bold text-foreground tabular-nums">
-                {match.homeScore ?? 0}
-              </span>
+              <AnimatedScore
+                value={match.homeScore ?? 0}
+                className="text-4xl font-bold text-foreground"
+              />
               <span className="text-lg text-muted-foreground">{':'}</span>
-              <span className="text-4xl font-bold text-foreground tabular-nums">
-                {match.awayScore ?? 0}
-              </span>
+              <AnimatedScore
+                value={match.awayScore ?? 0}
+                className="text-4xl font-bold text-foreground"
+              />
             </div>
             <div className="text-left flex-1">
               <div className="text-base font-bold text-foreground">{away}</div>

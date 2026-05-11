@@ -44,6 +44,7 @@ import type {
   PredictionContextPayload,
   Profile,
   QuickPredictInput,
+  RemoveLeagueMemberInput,
   StandingRow,
   SubmitPredictionInput,
   UpdateLeagueInput,
@@ -391,6 +392,7 @@ export async function getLeagueDetail(
   return {
     league,
     isAdmin,
+    members,
     standings,
     liveMatches: live.map((match) =>
       liveMatchSummary({
@@ -780,6 +782,27 @@ export async function joinLeague(input: JoinLeagueInput): Promise<League> {
   // Fetch the now-joinable league row.
   const { league } = await fetchLeagueWithCounts(leagueId)
   return league
+}
+
+/**
+ * Admin-only: remove a member from the league. Calls the
+ * remove_league_member RPC which enforces:
+ *   • caller is an admin of the league
+ *   • target is not themselves an admin
+ *   • caller is not removing themselves (use leaveLeague for that)
+ *
+ * Their predictions stay on record — the kick only revokes league access.
+ */
+export async function removeLeagueMember(
+  input: RemoveLeagueMemberInput,
+): Promise<void> {
+  await requireUser()
+  const supabase = createClient()
+  const { error } = await supabase.rpc('remove_league_member', {
+    p_league_id: input.leagueId,
+    p_user_id: input.userId,
+  })
+  if (error) throw error
 }
 
 // ── Profile ─────────────────────────────────────────────────────────────────

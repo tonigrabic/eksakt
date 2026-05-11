@@ -7,6 +7,7 @@ import { Trophy, Users, Crown, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScreenHeader } from '@/components/screen-header'
 import { CreateOrJoinLeague } from '@/components/create-or-join-league'
+import { HelpDialog } from '@/components/help-dialog'
 import { useMyLeagues } from '@/hooks/use-my-leagues'
 import { formatKickoff } from '@/lib/format'
 import type { MyLeagueCard } from '@/types'
@@ -16,7 +17,11 @@ export function MyLeaguesScreen() {
 
   return (
     <>
-      <ScreenHeader title="My Leagues" subtitle="Manage your competitions" />
+      <ScreenHeader
+        title="My Leagues"
+        subtitle="Manage your competitions"
+        action={<HelpDialog />}
+      />
 
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
         {isLoading || !data ? (

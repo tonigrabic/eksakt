@@ -1,5 +1,8 @@
 // Croatian-rules scoring engine. Pure functions only — same code runs in
 // the BE Edge Function and the UI's mock layer.
+//
+// Mirrors compute_points_for_match in 00018_simplify_scoring.sql.
+// If you change scoring rules here, change that migration too.
 
 import {
   type Booster,
@@ -17,34 +20,49 @@ function outcome(s: Score): Outcome {
   return 'draw'
 }
 
-function rarityBonus(percentMatching: number): 0 | 1 | 3 {
-  if (percentMatching < 5) return 3
-  if (percentMatching <= 15) return 1
+// Outcome-rarity bonus.
+//
+// Rule (in priority order):
+//   1. Lone caller — `matchingCount <= 1` → +3.
+//      Honours small leagues where the % rule alone would never fire
+//      (in a 10-person league, one matching pick is 10%, too common
+//      under the old <5% cliff).
+//   2. < 5% of the league matched → +3.
+//   3. <= 15% matched → +1.
+//   4. otherwise → 0.
+function rarityBonus(
+  matchingCount: number,
+  memberCount: number,
+): 0 | 1 | 3 {
+  if (matchingCount <= 1) return 3
+  if (memberCount === 0) return 0
+  const pct = (matchingCount / memberCount) * 100
+  if (pct < 5) return 3
+  if (pct <= 15) return 1
   return 0
 }
 
-// Stats describing how rare a prediction is among all predictions for a match.
+// Stats describing how rare a prediction is among all predictions for
+// a match. Counts include the predictor themselves.
 export type PredictionRarity = {
-  // Percent of league members who predicted the SAME final outcome (W/D/L).
-  outcomePercent: number
-  // Percent of league members who predicted the EXACT same score.
-  exactPercent: number
+  // Number of league members (including caller) who picked the same
+  // final outcome (W/D/L).
+  sameOutcomeCount: number
+  // Number of league members who picked the same exact score. Kept
+  // for the live-match audit display; no longer drives any bonus.
+  sameExactCount: number
+  // Total league members — the denominator. Non-predictors count too
+  // (implicitly "wrong outcome").
+  memberCount: number
 }
 
-// Rarity is "how many predicted the SAME outcome / score as me", relative
-// to the total number of league members (not just predictors). Members
-// who didn't submit a pick still count toward the denominator — they're
-// implicitly "wrong" and rarity dilutes accordingly.
-//
-// Mirrors compute_points_for_match in 00014_inclusive_rarity_and_audit.sql.
-// If you change this rule, change both files together.
 export function computeRarity(
   prediction: Pick<Prediction, 'homeScore' | 'awayScore'>,
   allPredictions: ReadonlyArray<Pick<Prediction, 'homeScore' | 'awayScore'>>,
   memberCount: number,
 ): PredictionRarity {
   if (memberCount === 0) {
-    return { outcomePercent: 0, exactPercent: 0 }
+    return { sameOutcomeCount: 0, sameExactCount: 0, memberCount: 0 }
   }
   const myOut = outcome({ home: prediction.homeScore, away: prediction.awayScore })
 
@@ -61,8 +79,9 @@ export function computeRarity(
     }
   }
   return {
-    outcomePercent: (sameOutcome / memberCount) * 100,
-    exactPercent: (sameExact / memberCount) * 100,
+    sameOutcomeCount: sameOutcome,
+    sameExactCount: sameExact,
+    memberCount,
   }
 }
 
@@ -96,11 +115,11 @@ export function computePoints({
   else if (correctOutcome) base = 1
 
   const outcomeBonus: PointsBreakdown['outcomeBonus'] = correctOutcome
-    ? rarityBonus(rarity.outcomePercent)
+    ? rarityBonus(rarity.sameOutcomeCount, rarity.memberCount)
     : 0
-  const exactBonus: PointsBreakdown['exactBonus'] = exact
-    ? rarityBonus(rarity.exactPercent)
-    : 0
+  // Exact-score rarity bonus permanently disabled — exact still earns
+  // the +4 base. See 00018_simplify_scoring.sql.
+  const exactBonus: PointsBreakdown['exactBonus'] = 0
 
   const multiplier = boosterMultiplier(prediction.booster)
   const total = (base + outcomeBonus + exactBonus) * multiplier

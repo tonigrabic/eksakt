@@ -28,8 +28,10 @@ import { usePrediction } from '@/components/prediction-provider'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import { useLeagueDetail } from '@/hooks/use-league-detail'
 import { useMatch } from '@/hooks/use-match'
+import { useRealtimeMatch } from '@/hooks/use-realtime-match'
+import { useLiveMinute } from '@/hooks/use-live-minute'
+import { AnimatedScore } from '@/components/animated-score'
 import {
-  displayLiveMinute,
   formatDayLabel,
   formatKickoff,
   pointsTier,
@@ -569,6 +571,9 @@ function LiveMatchCard({
   onToggle: () => void
 }) {
   const { match, userPrediction } = summary
+  // Score / status push updates while this card is on screen.
+  useRealtimeMatch(match.id, leagueId)
+  const liveMinute = useLiveMinute(match.liveMinute, match.status, match.kickoffTime)
   const home = match.homeTeam?.name ?? 'TBD'
   const away = match.awayTeam?.name ?? 'TBD'
   const userPts = userPrediction?.points?.total ?? 0
@@ -586,7 +591,7 @@ function LiveMatchCard({
           <div className="flex items-center justify-between mb-3">
             <Badge variant="destructive" className="gap-1 text-xs">
               <Circle className="h-1.5 w-1.5 fill-current" />
-              {displayLiveMinute(match.liveMinute, match.status, match.kickoffTime) ?? 'LIVE'}
+              {liveMinute ?? 'LIVE'}
             </Badge>
             {userPrediction && (
               <div className="flex items-center gap-2 text-xs">
@@ -609,13 +614,15 @@ function LiveMatchCard({
               <span className="font-bold text-foreground">{home}</span>
             </div>
             <div className="flex items-baseline gap-2.5">
-              <span className="text-3xl font-bold text-foreground tabular-nums">
-                {match.homeScore ?? 0}
-              </span>
+              <AnimatedScore
+                value={match.homeScore ?? 0}
+                className="text-3xl font-bold text-foreground"
+              />
               <span className="text-muted-foreground font-medium">{'-'}</span>
-              <span className="text-3xl font-bold text-foreground tabular-nums">
-                {match.awayScore ?? 0}
-              </span>
+              <AnimatedScore
+                value={match.awayScore ?? 0}
+                className="text-3xl font-bold text-foreground"
+              />
             </div>
             <div className="flex-1 text-left">
               <span className="font-bold text-foreground">{away}</span>
