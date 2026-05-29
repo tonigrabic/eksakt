@@ -171,11 +171,19 @@ function liveMatchSummary(
   userId: UUID,
 ): LiveMatchSummary {
   const peers = predictionsForMatchAndLeague(match.id, leagueId)
-  const userPred = peers.find((p) => p.userId === userId) ?? null
+  const ranked = peers
+    .map((p) => toDetailed(p, match))
+    .sort(
+      (a, b) =>
+        (b.points?.total ?? 0) - (a.points?.total ?? 0) ||
+        a.profile.displayName.localeCompare(b.profile.displayName),
+    )
+  const userPred = ranked.find((p) => p.userId === userId) ?? null
   return {
     match,
-    predictionCount: peers.length,
-    userPrediction: userPred ? toDetailed(userPred, match) : null,
+    predictionCount: ranked.length,
+    userPrediction: userPred,
+    rankedPredictions: ranked,
   }
 }
 

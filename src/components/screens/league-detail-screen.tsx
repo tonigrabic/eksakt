@@ -1,56 +1,69 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import {
-  ArrowLeft,
-  Trophy,
-  Users,
-  Clock,
-  ChevronRight,
-  ChevronDown,
-  Circle,
-  Zap,
-  TrendingUp,
-  TrendingDown,
-  Minus as MinusIcon,
-  CalendarClock,
-  Check,
-  X,
-  Settings,
-} from 'lucide-react'
+import { ArrowLeft, ChevronDown, Settings, Star, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePrediction } from '@/components/prediction-provider'
-import { useCurrentUser } from '@/hooks/use-current-user'
 import { useLeagueDetail } from '@/hooks/use-league-detail'
-import { useMatch } from '@/hooks/use-match'
 import { useRealtimeMatch } from '@/hooks/use-realtime-match'
 import { useLiveMinute } from '@/hooks/use-live-minute'
 import { AnimatedScore } from '@/components/animated-score'
 import {
-  formatDayLabel,
-  formatKickoff,
-  pointsTier,
-} from '@/lib/format'
+  BOOSTER_PILL,
+  BOOSTER_RAIL,
+  BoosterPill,
+  Crest,
+  formatClock,
+  formatCountdown,
+  nth,
+  teamName,
+} from '@/components/match-ui'
+import { formatDayLabel } from '@/lib/format'
 import type {
   CompletedMatchSummary,
-  League,
   LiveMatchSummary,
   Match,
+  PredictionWithDetails,
   StandingRow,
   UpcomingMatchSummary,
   UUID,
 } from '@/types'
 
-const POINTS_COLOR: Record<ReturnType<typeof pointsTier>, string> = {
-  high: 'text-primary',
-  mid: 'text-foreground',
-  low: 'text-muted-foreground',
-  zero: 'text-muted-foreground/50',
+// "Stadium Broadcast" (Direction E). Big Shoulders Display (`font-display`)
+// on impact numerals + names; Geist for labels; Geist Mono for scores in
+// lists, the live minute, and counts. Amber (`primary`) is the user's
+// identity colour; `destructive` is reserved for live + urgency only.
+// Shared crest / booster / format primitives live in `@/components/match-ui`.
+
+const URGENT_KICKOFF_MIN = 120 // unpredicted + kicking off within 2h = urgent
+
+function SectionHead({
+  title,
+  meta,
+  live = false,
+}: {
+  title: string
+  meta?: string
+  live?: boolean
+}) {
+  return (
+    <div className="flex items-center gap-[10px] mb-3">
+      <span className="font-display text-[18px] font-extrabold uppercase tracking-[0.04em] text-foreground inline-flex items-center gap-2">
+        {live && (
+          <span className="size-[6px] rounded-full bg-destructive animate-pulse" />
+        )}
+        {title}
+      </span>
+      <span className="flex-1 h-px bg-border" />
+      {meta && (
+        <span className="font-mono text-[10px] uppercase tracking-[0.08em] font-semibold text-dim">
+          {meta}
+        </span>
+      )}
+    </div>
+  )
 }
 
 interface Props {
@@ -61,7 +74,10 @@ export function LeagueDetailScreen({ leagueId }: Props) {
   const router = useRouter()
   const { openPrediction } = usePrediction()
   const { data, isLoading } = useLeagueDetail(leagueId)
-  const [expandedMatchId, setExpandedMatchId] = useState<UUID | null>(null)
+  const [tab, setTab] = useState<'upcoming' | 'played'>('upcoming')
+  // Accordion for live cards: which match's picks are expanded. Only one
+  // open at a time when several matches are live.
+  const [openLiveId, setOpenLiveId] = useState<UUID | null>(null)
 
   if (isLoading || !data) {
     return (
@@ -81,194 +97,696 @@ export function LeagueDetailScreen({ leagueId }: Props) {
   } = data
   const hasLive = liveMatches.length > 0
   const userStanding = standings.find((s) => s.isCurrentUser)
-  const unpredictedCount = upcomingMatches.filter(
-    (u) => u.userPrediction === null,
-  ).length
+  const livePicks = liveMatches.reduce((a, m) => a + m.predictionCount, 0)
 
   return (
-    <div className="min-h-screen bg-background pb-6">
-      <div className="border-b border-border bg-card sticky top-0 z-10">
-        <div className="max-w-2xl mx-auto px-4 py-3">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 -ml-1"
-              onClick={() => router.back()}
-            >
-              <ArrowLeft className="h-4 w-4" />
-              <span className="sr-only">{'Back'}</span>
-            </Button>
-            <div className="flex-1 min-w-0">
-              <h1 className="text-lg font-bold text-foreground truncate">
-                {league.name}
-              </h1>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1">
-                  <Users className="h-3 w-3" />
-                  {league.memberCount} {'players'}
-                </span>
-                {userStanding && (
-                  <>
-                    <span className="text-border">{'|'}</span>
-                    <span className="font-semibold text-foreground">
-                      {'#'}{userStanding.position}
-                    </span>
-                    <span className="text-border">{'|'}</span>
-                    <span className="font-semibold text-foreground">
-                      {userStanding.totalPoints + userStanding.matchdayPoints} {'pts'}
-                    </span>
-                  </>
-                )}
-              </div>
+    <div className="min-h-screen bg-background pb-8 tabular-nums">
+      {/* ── Top bar ───────────────────────────────────────────────────── */}
+      <div className="sticky top-0 z-10 bg-background border-b border-border">
+        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-[10px]">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="grid place-items-center size-[30px] rounded-[8px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0"
+          >
+            <ArrowLeft className="size-4" />
+            <span className="sr-only">{'Back'}</span>
+          </button>
+          <div className="flex-1 min-w-0">
+            <div className="font-display text-[22px] font-black uppercase leading-none tracking-[0.005em] text-foreground truncate">
+              {league.name}
             </div>
-            {hasLive ? (
-              <Badge variant="destructive" className="gap-1 text-xs flex-shrink-0">
-                <Circle className="h-1.5 w-1.5 fill-current animate-pulse" />
-                {liveMatches.length} {'LIVE'}
-              </Badge>
-            ) : (
-              <Badge variant="secondary" className="text-xs flex-shrink-0">
-                {'No live'}
-              </Badge>
-            )}
-            {isAdmin && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 flex-shrink-0"
-                asChild
-              >
-                <Link href={`/leagues/${leagueId}/settings`} aria-label="League settings">
-                  <Settings className="h-4 w-4" />
-                </Link>
-              </Button>
-            )}
+            <div className="text-[10px] text-muted-foreground mt-[3px] tracking-[0.12em] uppercase font-semibold">
+              {league.memberCount} {'players'}
+            </div>
           </div>
+          {hasLive ? (
+            <span className="inline-flex items-center gap-[5px] bg-destructive text-foreground rounded-full px-[10px] py-[5px] text-[10px] font-extrabold tracking-[0.1em] shrink-0">
+              <span className="size-[5px] rounded-full bg-current animate-pulse" />
+              {liveMatches.length} {'LIVE'}
+            </span>
+          ) : (
+            <span className="inline-flex items-center bg-secondary text-muted-foreground rounded-full px-[10px] py-[5px] text-[10px] font-bold tracking-[0.1em] uppercase border border-border shrink-0">
+              {'No live'}
+            </span>
+          )}
+          {isAdmin && (
+            <Link
+              href={`/leagues/${leagueId}/settings`}
+              aria-label="League settings"
+              className="grid place-items-center size-[30px] rounded-[8px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0"
+            >
+              <Settings className="size-4" />
+            </Link>
+          )}
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto px-4 py-4 space-y-6">
+      {/* ── Hero: rank + total ────────────────────────────────────────── */}
+      {userStanding && (
+        <div className="border-b border-border">
+          <div className="max-w-2xl mx-auto relative overflow-hidden px-[18px] py-[22px]">
+            <div className="pointer-events-none absolute -top-[120px] -right-[80px] size-[300px] rounded-full bg-[radial-gradient(circle,oklch(0.84_0.18_78_/_0.18),transparent_60%)]" />
+            <div className="relative z-[1] grid grid-cols-[auto_1fr] items-end gap-[18px]">
+              {/* Rank */}
+              <div className="flex flex-col gap-[2px]">
+                <span className="text-[9px] font-extrabold uppercase tracking-[0.22em] text-muted-foreground">
+                  {'Rank'}
+                </span>
+                <span className="font-display flex items-baseline gap-1 text-primary">
+                  <span className="text-[36px] font-bold leading-none opacity-50">
+                    {'#'}
+                  </span>
+                  <span className="text-[84px] font-extrabold leading-[0.82]">
+                    {String(userStanding.position).padStart(2, '0')}
+                  </span>
+                </span>
+                <span className="text-[11px] text-muted-foreground tracking-[0.1em] font-semibold">
+                  {'of'} {league.memberCount}
+                </span>
+              </div>
+              {/* Total */}
+              <div className="flex flex-col gap-1 text-right border-l border-border pl-[14px] ml-auto self-stretch justify-end">
+                <span className="text-[9px] font-extrabold uppercase tracking-[0.22em] text-muted-foreground">
+                  {'Total'}
+                </span>
+                <span className="font-display text-[44px] font-extrabold leading-[0.88] tracking-[-0.04em] text-foreground">
+                  {userStanding.totalPoints + userStanding.matchdayPoints}
+                </span>
+                <span className="text-[11px] text-muted-foreground font-semibold tracking-[0.05em]">
+                  {'points'}
+                </span>
+                {hasLive && userStanding.matchdayPoints > 0 && (
+                  <span className="self-end inline-flex items-center gap-1 bg-primary/10 text-primary rounded-full px-2 py-[3px] text-[11px] font-extrabold font-mono mt-[2px]">
+                    {'▲ +'}
+                    {userStanding.matchdayPoints} {'live'}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="max-w-2xl mx-auto px-4">
+        {/* ── Live scoreboard(s) ──────────────────────────────────────── */}
         {hasLive && (
-          <LiveMatchesSection
-            liveMatches={liveMatches}
-            league={league}
-            leagueId={leagueId}
-            expandedMatchId={expandedMatchId}
-            onToggle={(id) =>
-              setExpandedMatchId(expandedMatchId === id ? null : id)
-            }
-          />
+          <section className="pt-[22px]">
+            <SectionHead title="Live" meta={`${livePicks} picks`} live />
+            <div className="space-y-3">
+              {liveMatches.map((m) => {
+                const collapsible = liveMatches.length > 1
+                return (
+                  <LiveScoreboard
+                    key={m.match.id}
+                    summary={m}
+                    leagueId={leagueId}
+                    collapsible={collapsible}
+                    expanded={!collapsible || openLiveId === m.match.id}
+                    onToggle={() =>
+                      setOpenLiveId((cur) =>
+                        cur === m.match.id ? null : m.match.id,
+                      )
+                    }
+                  />
+                )
+              })}
+            </div>
+          </section>
         )}
 
-        <section className="space-y-3">
-          <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-            {hasLive ? 'Live Standings' : 'Standings'}
-          </h2>
+        {/* ── Standings ───────────────────────────────────────────────── */}
+        <section className="pt-[22px]">
+          <SectionHead title="Standings" meta={`${standings.length} players`} />
           <StandingsTable standings={standings} hasLive={hasLive} />
         </section>
 
-        <UpcomingSection
-          upcoming={upcomingMatches}
-          league={league}
-          unpredictedCount={unpredictedCount}
-          onPredict={openPrediction}
-        />
+        {/* ── Tabs: Upcoming / Played ─────────────────────────────────── */}
+        <div className="pt-[26px]">
+          <div className="grid grid-cols-2 bg-card border border-border rounded-[10px] p-1">
+            <TabButton
+              active={tab === 'upcoming'}
+              count={upcomingMatches.length}
+              onClick={() => setTab('upcoming')}
+            >
+              {'Upcoming'}
+            </TabButton>
+            <TabButton
+              active={tab === 'played'}
+              count={completedMatches.length}
+              onClick={() => setTab('played')}
+            >
+              {'Played'}
+            </TabButton>
+          </div>
 
-        {completedMatches.length > 0 && (
-          <RecentResultsSection
-            completed={completedMatches}
-            leagueId={leagueId}
-          />
-        )}
+          <div className="pt-1">
+            {tab === 'upcoming' ? (
+              <UpcomingTab
+                upcoming={upcomingMatches}
+                onPredict={openPrediction}
+              />
+            ) : (
+              <PlayedTab completed={completedMatches} leagueId={leagueId} />
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
-// ── Live matches: grouped by competition (single-comp leagues skip header) ─
+// ── Tab button ───────────────────────────────────────────────────────────────
 
-function LiveMatchesSection({
-  liveMatches,
-  league,
+function TabButton({
+  active,
+  count,
+  onClick,
+  children,
+}: {
+  active: boolean
+  count: number
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'inline-flex items-center justify-center gap-2 py-[10px] rounded-[7px] font-display text-[15px] font-extrabold uppercase tracking-[0.08em] transition-colors',
+        active
+          ? 'bg-foreground text-background'
+          : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {children}
+      <span
+        className={cn(
+          'font-mono text-[10px] font-bold rounded-full px-[7px] py-px normal-case tracking-normal',
+          active ? 'bg-background text-foreground' : 'bg-secondary text-muted-foreground',
+        )}
+      >
+        {count}
+      </span>
+    </button>
+  )
+}
+
+// ── Live scoreboard card ─────────────────────────────────────────────────────
+
+const LIVE_PICKS_PREVIEW = 5
+
+function LiveScoreboard({
+  summary,
   leagueId,
-  expandedMatchId,
+  expanded,
+  collapsible,
   onToggle,
 }: {
-  liveMatches: LiveMatchSummary[]
-  league: League
+  summary: LiveMatchSummary
   leagueId: UUID
-  expandedMatchId: UUID | null
-  onToggle: (matchId: UUID) => void
+  expanded: boolean
+  collapsible: boolean
+  onToggle: () => void
 }) {
-  const compNameById = useMemo(() => {
-    const m = new Map<UUID, string>()
-    for (const lc of league.competitions) {
-      m.set(lc.competition.id, lc.competition.name)
-    }
-    return m
-  }, [league.competitions])
-  const showCompHeader = league.competitions.length > 1
-
-  const compBuckets = useMemo(
-    () => bucketByCompetition(liveMatches, compNameById),
-    [liveMatches, compNameById],
+  const { match, userPrediction, predictionCount, rankedPredictions } = summary
+  useRealtimeMatch(match.id, leagueId)
+  const liveMinute = useLiveMinute(
+    match.liveMinute,
+    match.status,
+    match.kickoffTime,
   )
+  const booster = userPrediction?.booster ?? null
+  const userPts = userPrediction?.points?.total ?? 0
+  const [showAll, setShowAll] = useState(false)
+  const matchHref = `/matches/${match.id}?league=${leagueId}`
+
+  const leader = rankedPredictions[0] ?? null
+  const youIdx = userPrediction
+    ? rankedPredictions.findIndex((p) => p.id === userPrediction.id)
+    : -1
 
   return (
-    <section className="space-y-3">
-      <div className="flex items-center gap-2">
-        <Circle className="h-2 w-2 fill-destructive text-destructive animate-pulse" />
-        <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-          {'Live Matches'}
-        </h2>
+    <div className="rounded-[14px] overflow-hidden border border-destructive/15 bg-gradient-to-b from-[oklch(0.10_0.005_30)] to-card">
+      {/* Everything above the picks section links to the full match page
+          (all predictions + live standings). */}
+      <Link
+        href={matchHref}
+        aria-label={`${teamName(match.homeTeam)} vs ${teamName(match.awayTeam)} — match details`}
+        className="block transition-colors hover:bg-white/[0.02]"
+      >
+      {/* top strip */}
+      <div className="flex justify-between items-center px-[14px] py-[9px] border-b border-border bg-[oklch(0.115_0.005_30)]">
+        <span className="text-[10px] text-muted-foreground tracking-[0.16em] uppercase font-bold">
+          {match.round.name}
+        </span>
+        <span className="text-destructive font-extrabold inline-flex items-center gap-[6px] font-mono text-[11px] tracking-[0.06em]">
+          <span className="size-[5px] rounded-full bg-destructive animate-pulse" />
+          {liveMinute ?? 'LIVE'}
+        </span>
       </div>
 
-      <div className="space-y-3">
-        {compBuckets.map((comp) => (
-          <div key={comp.competitionId} className="space-y-2">
-            {showCompHeader && (
-              <h4 className="text-[11px] font-medium text-muted-foreground tracking-wide px-1">
-                {comp.name}
-              </h4>
-            )}
-            <div className="space-y-3">
-              {comp.matches.map((m) => (
-                <LiveMatchCard
-                  key={m.match.id}
-                  summary={m}
-                  leagueId={leagueId}
-                  expanded={expandedMatchId === m.match.id}
-                  onToggle={() => onToggle(m.match.id)}
-                />
-              ))}
-            </div>
-          </div>
-        ))}
+      {/* scoreboard */}
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-[14px] px-[14px] py-[18px]">
+        <div className="flex flex-col items-center gap-[10px] min-w-0">
+          <Crest team={match.homeTeam} size="lg" />
+          <span className="font-display text-[18px] font-extrabold uppercase tracking-[0.01em] leading-none text-center">
+            {teamName(match.homeTeam)}
+          </span>
+        </div>
+        <div className="flex items-center gap-1 leading-none text-foreground">
+          <AnimatedScore
+            value={match.homeScore ?? 0}
+            className="font-display text-[64px] font-black leading-[0.85] tracking-[-0.04em]"
+          />
+          <span className="font-display text-[36px] font-bold text-dim px-1 -translate-y-1">
+            {':'}
+          </span>
+          <AnimatedScore
+            value={match.awayScore ?? 0}
+            className="font-display text-[64px] font-black leading-[0.85] tracking-[-0.04em]"
+          />
+        </div>
+        <div className="flex flex-col items-center gap-[10px] min-w-0">
+          <Crest team={match.awayTeam} size="lg" />
+          <span className="font-display text-[18px] font-extrabold uppercase tracking-[0.01em] leading-none text-center">
+            {teamName(match.awayTeam)}
+          </span>
+        </div>
       </div>
-    </section>
+
+      {/* your pick */}
+      {userPrediction && (
+        <div className="grid grid-cols-[auto_1fr_auto] gap-[14px] items-center px-[14px] py-[11px] border-t border-dashed border-hair-strong bg-[oklch(0.105_0.003_60)]">
+          <span className="text-[9px] font-extrabold uppercase tracking-[0.22em] text-muted-foreground">
+            {'Your pick'}
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <span className="font-display text-[26px] font-extrabold leading-[0.9] tracking-[-0.02em]">
+              {userPrediction.homeScore}
+              {'–'}
+              {userPrediction.awayScore}
+            </span>
+            {booster && <BoosterPill booster={booster} />}
+          </span>
+          <span className="flex flex-col items-end gap-px">
+            <span className="text-[9px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground">
+              {'Points'}
+            </span>
+            <span className="font-display text-[32px] font-black text-primary leading-[0.85] tracking-[-0.03em]">
+              {userPts > 0 ? `+${userPts}` : '0'}
+            </span>
+          </span>
+        </div>
+      )}
+      </Link>
+
+      {/* picks — collapsed summary (accordion) or expanded ranked list */}
+      {collapsible && !expanded ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="w-full flex justify-between items-center gap-3 px-[14px] py-[11px] border-t border-border text-left hover:bg-secondary/30 transition-colors"
+        >
+          <span className="text-[12px] truncate">
+            {leader && (
+              <>
+                <span className="text-muted-foreground">{'Leader '}</span>
+                <span className="font-semibold text-foreground">
+                  {leader.profile.displayName}
+                </span>{' '}
+                <span className="font-mono font-bold text-primary">
+                  {(leader.points?.total ?? 0) > 0
+                    ? `+${leader.points?.total}`
+                    : '0'}
+                </span>
+                <span className="text-dim">{'  ·  '}</span>
+              </>
+            )}
+            <span className="text-muted-foreground">{'You '}</span>
+            {youIdx >= 0 ? (
+              <>
+                <span className="font-semibold text-foreground">
+                  {youIdx + 1}
+                  {nth(youIdx + 1)}
+                </span>{' '}
+                <span className="font-mono font-bold text-primary">
+                  {userPts > 0 ? `+${userPts}` : '·'}
+                </span>
+              </>
+            ) : (
+              <span className="text-dim">{'no pick'}</span>
+            )}
+          </span>
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground shrink-0">
+            {'Picks'}
+            <ChevronDown className="size-4" />
+          </span>
+        </button>
+      ) : (
+        <LivePicks
+          ranked={rankedPredictions}
+          youId={userPrediction?.id ?? null}
+          youIdx={youIdx}
+          showAll={showAll}
+          onToggleShowAll={() => setShowAll((v) => !v)}
+          collapsible={collapsible}
+          onCollapse={onToggle}
+          matchHref={`/matches/${match.id}?league=${leagueId}`}
+          predictionCount={predictionCount}
+        />
+      )}
+    </div>
   )
 }
 
-// ── Upcoming: day buckets > competition groups > matches ────────────────────
-//
-// Layout: outer sticky labels are days ("TODAY" / "TOMORROW" / "WED 14 MAY").
-// Inside each day, matches are sub-grouped by competition (only when the
-// league tracks multiple comps — single-comp leagues skip the sub-header).
-// Matches inside a competition group are sorted by kickoff time.
-//
-// Default: show the next 2 non-empty days. "Load more" appends the next
-// non-empty day, with the button label telling you exactly what's about
-// to appear and how many matches are in it. Empty days (international
-// breaks, etc.) are skipped automatically.
+function LivePicks({
+  ranked,
+  youId,
+  youIdx,
+  showAll,
+  onToggleShowAll,
+  collapsible,
+  onCollapse,
+  matchHref,
+  predictionCount,
+}: {
+  ranked: PredictionWithDetails[]
+  youId: string | null
+  youIdx: number
+  showAll: boolean
+  onToggleShowAll: () => void
+  collapsible: boolean
+  onCollapse: () => void
+  matchHref: string
+  predictionCount: number
+}) {
+  const visible = showAll ? ranked : ranked.slice(0, LIVE_PICKS_PREVIEW)
+  const hasMore = ranked.length > LIVE_PICKS_PREVIEW
+  // Pin the user's row when they're outside the previewed top N.
+  const pinYou = !showAll && youIdx >= LIVE_PICKS_PREVIEW
 
-const DAYS_INITIAL = 2
+  return (
+    <div className="border-t border-border">
+      <div className="flex items-center justify-between px-[14px] py-[11px]">
+        <span className="text-[9px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground">
+          {'Picks · by points'}
+        </span>
+        {collapsible && (
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {'Hide'}
+            <ChevronDown className="size-4 rotate-180" />
+          </button>
+        )}
+      </div>
 
-type DayBucket = {
-  key: string
-  date: Date
-  matches: UpcomingMatchSummary[]
+      <div className="px-[14px] pb-1">
+        {visible.map((p, i) => (
+          <LivePickRow key={p.id} p={p} rank={i + 1} isYou={p.id === youId} />
+        ))}
+        {pinYou && ranked[youIdx] && (
+          <>
+            <div className="text-center text-dim text-[11px] leading-none py-1">
+              {'·····'}
+            </div>
+            <LivePickRow p={ranked[youIdx]} rank={youIdx + 1} isYou />
+          </>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between px-[14px] py-[9px] border-t border-border text-[11px] text-muted-foreground">
+        {hasMore ? (
+          <button
+            type="button"
+            onClick={onToggleShowAll}
+            className="font-semibold text-foreground hover:text-primary transition-colors"
+          >
+            {showAll ? 'Show top 5' : `Show all ${predictionCount}`}
+          </button>
+        ) : (
+          <span>
+            {predictionCount} {'picks'}
+          </span>
+        )}
+        <Link href={matchHref} className="text-foreground font-semibold hover:underline">
+          {'Match details →'}
+        </Link>
+      </div>
+    </div>
+  )
 }
+
+function LivePickRow({
+  p,
+  rank,
+  isYou,
+}: {
+  p: PredictionWithDetails
+  rank: number
+  isYou: boolean
+}) {
+  const pts = p.points?.total ?? 0
+  const exact = p.points?.base === 4
+  const ptsColor = exact
+    ? 'text-primary'
+    : pts > 0
+      ? 'text-foreground'
+      : 'text-dim'
+  return (
+    <div
+      className={cn(
+        'flex items-center gap-2 py-[7px]',
+        isYou && 'bg-primary/10 border-l-[3px] border-l-primary -mx-[14px] pl-[11px] pr-[14px]',
+      )}
+    >
+      <span className="w-[18px] text-center font-mono text-[11px] text-dim">
+        {rank}
+      </span>
+      <span
+        className={cn(
+          'flex-1 truncate text-[13px]',
+          isYou ? 'text-foreground font-bold' : 'font-medium',
+        )}
+      >
+        {p.profile.displayName}
+      </span>
+      <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
+        {p.homeScore}
+        {'–'}
+        {p.awayScore}
+      </span>
+      {p.booster && (
+        <span
+          className={cn(
+            'inline-flex items-center gap-0.5 rounded-[4px] px-1 py-px text-[10px] font-black leading-none',
+            BOOSTER_PILL[p.booster],
+          )}
+        >
+          <Zap className="size-[9px] fill-current" />
+          {'×'}
+          {p.booster.slice(1)}
+        </span>
+      )}
+      <span
+        className={cn(
+          'w-[40px] text-right font-display text-[18px] font-extrabold tracking-[-0.02em] tabular-nums',
+          ptsColor,
+        )}
+      >
+        {pts > 0 ? `+${pts}` : '·'}
+      </span>
+    </div>
+  )
+}
+
+// ── Standings ────────────────────────────────────────────────────────────────
+
+// Above this many players the table condenses to: top 3 + a gap + the
+// user's own row with one neighbour either side + "Show all". Smaller
+// leagues render in full. Expanding shows everyone inline (page scroll,
+// no inner scrollbar).
+const STANDINGS_FULL_LIMIT = 12
+
+// Build the rows to display. When condensed, returns the top 3 plus the
+// user's window (you ±1), de-duped and ordered, with a `gapBefore` flag
+// wherever the visible positions skip.
+function buildStandingsView(
+  standings: StandingRow[],
+  condense: boolean,
+): { row: StandingRow; gapBefore: boolean }[] {
+  if (!condense) return standings.map((row) => ({ row, gapBefore: false }))
+
+  const n = standings.length
+  const show = new Set<number>()
+  for (let i = 0; i < Math.min(3, n); i++) show.add(i)
+  const userIdx = standings.findIndex((r) => r.isCurrentUser)
+  if (userIdx >= 0) {
+    for (const j of [userIdx - 1, userIdx, userIdx + 1]) {
+      if (j >= 0 && j < n) show.add(j)
+    }
+  } else {
+    // No "you" row (rare) — just show a few more from the top.
+    for (let i = 3; i < Math.min(6, n); i++) show.add(i)
+  }
+
+  const ordered = Array.from(show).sort((a, b) => a - b)
+  let prev = -1
+  return ordered.map((idx) => {
+    const item = { row: standings[idx], gapBefore: prev !== -1 && idx - prev > 1 }
+    prev = idx
+    return item
+  })
+}
+
+function StandingsTable({
+  standings,
+  hasLive,
+}: {
+  standings: StandingRow[]
+  hasLive: boolean
+}) {
+  const [showAll, setShowAll] = useState(false)
+  const cols = hasLive
+    ? 'grid-cols-[34px_1fr_40px_50px_28px_22px]'
+    : 'grid-cols-[34px_1fr_50px_28px_22px]'
+
+  const collapsible = standings.length > STANDINGS_FULL_LIMIT
+  const items = buildStandingsView(standings, collapsible && !showAll)
+
+  return (
+    <div className="bg-card border border-border rounded-[12px] overflow-hidden">
+      <div
+        className={cn(
+          'grid items-center px-[14px] py-[10px] border-b border-border text-[9px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground',
+          cols,
+        )}
+      >
+        <span>{'#'}</span>
+        <span>{'Player'}</span>
+        {hasLive && <span className="text-center">{'Live'}</span>}
+        <span className="text-right">{'Total'}</span>
+        <span className="text-right">{'Ex'}</span>
+        <span />
+      </div>
+
+      {items.map(({ row, gapBefore }) => (
+        <Fragment key={row.profile.id}>
+          {gapBefore && (
+            <div className="px-[14px] py-1 text-center text-dim text-[13px] leading-none tracking-[0.3em] border-b border-border select-none">
+              {'···'}
+            </div>
+          )}
+          <StandingRowView row={row} hasLive={hasLive} cols={cols} />
+        </Fragment>
+      ))}
+
+      {collapsible && (
+        <button
+          type="button"
+          onClick={() => setShowAll((v) => !v)}
+          className="w-full py-2.5 text-xs font-semibold text-foreground hover:text-primary transition-colors"
+        >
+          {showAll ? 'Show less' : `Show all ${standings.length} players`}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function StandingRowView({
+  row,
+  hasLive,
+  cols,
+}: {
+  row: StandingRow
+  hasLive: boolean
+  cols: string
+}) {
+  const isUser = row.isCurrentUser
+  const total = hasLive ? row.totalPoints + row.matchdayPoints : row.totalPoints
+  return (
+    <div
+      className={cn(
+        'grid items-center py-[9px] pr-[14px] border-b border-border last:border-b-0 text-[13px]',
+        cols,
+        isUser
+          ? 'bg-primary/10 border-l-[3px] border-l-primary pl-[11px]'
+          : 'pl-[14px]',
+      )}
+    >
+      <span
+        className={cn(
+          'font-display text-[22px] font-extrabold leading-none tracking-[-0.02em]',
+          isUser
+            ? 'text-primary'
+            : row.position === 1
+              ? 'text-primary'
+              : row.position <= 3
+                ? 'text-foreground'
+                : 'text-dim',
+        )}
+      >
+        {String(row.position).padStart(2, '0')}
+      </span>
+      <span
+        className={cn(
+          'inline-flex items-center gap-[6px] min-w-0 font-medium',
+          isUser && 'text-foreground font-bold',
+        )}
+      >
+        {row.position === 1 && (
+          <Star className="size-[11px] fill-primary text-primary shrink-0" />
+        )}
+        <span className="truncate">{row.profile.displayName}</span>
+        {row.boostersUsed > 0 && (
+          <Zap className="size-[10px] text-primary opacity-55 shrink-0 fill-current" />
+        )}
+      </span>
+      {hasLive && (
+        <span
+          className={cn(
+            'font-mono font-bold text-center text-[12px]',
+            row.matchdayPoints > 0 ? 'text-primary' : 'text-dim opacity-45',
+          )}
+        >
+          {row.matchdayPoints > 0 ? `+${row.matchdayPoints}` : '·'}
+        </span>
+      )}
+      <span
+        className={cn(
+          'font-display text-[22px] font-extrabold leading-none tracking-[-0.02em] text-right',
+          isUser ? 'text-primary' : 'text-foreground',
+        )}
+      >
+        {total}
+      </span>
+      <span className="font-mono text-right text-[11px] text-muted-foreground">
+        {row.exactScores}
+      </span>
+      <span
+        className={cn(
+          'grid place-items-center text-[11px] font-extrabold font-mono',
+          row.positionChange > 0
+            ? 'text-success'
+            : row.positionChange < 0
+              ? 'text-destructive'
+              : 'text-dim opacity-50',
+        )}
+      >
+        {row.positionChange > 0 ? '▲' : row.positionChange < 0 ? '▼' : '·'}
+      </span>
+    </div>
+  )
+}
+
+// ── Upcoming tab ─────────────────────────────────────────────────────────────
+
+type DayBucket = { key: string; date: Date; matches: UpcomingMatchSummary[] }
 
 function bucketByDay(matches: UpcomingMatchSummary[]): DayBucket[] {
   const buckets = new Map<string, DayBucket>()
@@ -289,586 +807,343 @@ function bucketByDay(matches: UpcomingMatchSummary[]): DayBucket[] {
   )
 }
 
-// Generic over the match-summary kind (live / upcoming / completed) so
-// both LiveMatchesSection and UpcomingSection can call it.
-function bucketByCompetition<T extends { match: Match }>(
-  matches: T[],
-  compNameById: Map<UUID, string>,
-): Array<{ competitionId: UUID; name: string; matches: T[] }> {
-  const buckets = new Map<
-    UUID,
-    { competitionId: UUID; name: string; matches: T[] }
-  >()
-  for (const m of matches) {
-    const cid = m.match.competitionId
-    let bucket = buckets.get(cid)
-    if (!bucket) {
-      bucket = {
-        competitionId: cid,
-        name: compNameById.get(cid) ?? '—',
-        matches: [],
-      }
-      buckets.set(cid, bucket)
-    }
-    bucket.matches.push(m)
-  }
-  // Order comp groups by their earliest kickoff so the user sees the
-  // next thing happening first.
-  return Array.from(buckets.values()).sort((a, b) =>
-    a.matches[0].match.kickoffTime.localeCompare(b.matches[0].match.kickoffTime),
+function DayStrip({
+  label,
+  count,
+  today = false,
+}: {
+  label: string
+  count: number
+  today?: boolean
+}) {
+  return (
+    <div className="flex items-center gap-3 mt-[22px] mb-3 first:mt-3">
+      <span
+        className={cn(
+          'font-display text-[14px] font-black uppercase tracking-[0.06em] rounded-full px-[11px] py-[3px] border',
+          today
+            ? 'bg-primary text-background border-primary'
+            : 'bg-card text-foreground border-border',
+        )}
+      >
+        {label}
+      </span>
+      <span className="flex-1 h-px bg-border" />
+      <span className="font-mono text-[10px] uppercase tracking-[0.12em] font-bold text-dim">
+        {count} {count === 1 ? 'match' : 'matches'}
+      </span>
+    </div>
   )
 }
 
-function UpcomingSection({
+// Show the next 2 non-empty days by default; "Load more" appends the next
+// non-empty day (label + match count on the button), and collapses back.
+const DAYS_INITIAL = 2
+
+function UpcomingTab({
   upcoming,
-  league,
-  unpredictedCount,
   onPredict,
 }: {
   upcoming: UpcomingMatchSummary[]
-  league: League
-  unpredictedCount: number
   onPredict: (matchId: UUID) => void
 }) {
-  const compNameById = useMemo(() => {
-    const m = new Map<UUID, string>()
-    for (const lc of league.competitions) {
-      m.set(lc.competition.id, lc.competition.name)
-    }
-    return m
-  }, [league.competitions])
-  const showCompHeader = league.competitions.length > 1
-
   const days = useMemo(() => bucketByDay(upcoming), [upcoming])
   const [daysShown, setDaysShown] = useState(DAYS_INITIAL)
+
+  if (upcoming.length === 0) {
+    return (
+      <div className="mt-3 rounded-[12px] border border-border bg-card px-5 py-8 text-center">
+        <p className="text-sm font-semibold text-foreground">
+          {'No upcoming fixtures'}
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          {'Check back when the next round is scheduled.'}
+        </p>
+      </div>
+    )
+  }
+
   const visibleDays = days.slice(0, daysShown)
   const nextDay = days[daysShown]
   const remainingDays = days.length - visibleDays.length
 
-  if (upcoming.length === 0) {
-    return (
-      <Card className="bg-card border-border overflow-hidden">
-        <div className="p-5 text-center">
-          <div className="h-12 w-12 rounded-full bg-secondary flex items-center justify-center mx-auto mb-3">
-            <CalendarClock className="h-6 w-6 text-muted-foreground" />
-          </div>
-          <p className="text-sm font-semibold text-foreground">
-            {'No upcoming fixtures'}
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {'Check back when the next round is scheduled.'}
-          </p>
-        </div>
-      </Card>
-    )
-  }
-
   return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-          {'Upcoming'}
-        </h2>
-        {unpredictedCount > 0 && (
-          <span className="text-xs font-medium text-primary">
-            {unpredictedCount} {'to predict'}
-          </span>
-        )}
-      </div>
-
-      <div className="space-y-5">
-        {visibleDays.map((day) => {
-          // Pure chronological order within the day; competition shown as
-          // a chip on each card instead of grouping.
-          const sorted = [...day.matches].sort((a, b) =>
-            a.match.kickoffTime.localeCompare(b.match.kickoffTime),
-          )
-          const dayLabel = formatDayLabel(day.date)
-          // Highlight TODAY/TOMORROW with primary color; less imminent
-          // future days get a muted treatment so the eye lands on
-          // what's actually relevant right now.
-          const isImminent = dayLabel === 'TODAY' || dayLabel === 'TOMORROW'
-
-          return (
-            <div key={day.key} className="space-y-3">
-              <div className="sticky top-[4.5rem] z-[5] -mx-4 px-4 py-2.5 bg-background/95 backdrop-blur-sm">
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 h-px bg-border/50" />
-                  <h3
-                    className={cn(
-                      'inline-flex items-center px-3 py-1 rounded-full',
-                      'text-xs font-bold uppercase tracking-[0.15em]',
-                      'border',
-                      isImminent
-                        ? 'bg-primary/15 text-primary border-primary/30'
-                        : 'bg-secondary text-foreground border-border',
-                    )}
-                  >
-                    {dayLabel}
-                  </h3>
-                  <div className="flex-1 h-px bg-border/50" />
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                {sorted.map((u) => (
-                  <UpcomingMatchCard
-                    key={u.match.id}
-                    summary={u}
-                    competitionName={
-                      showCompHeader
-                        ? compNameById.get(u.match.competitionId) ?? null
-                        : null
-                    }
-                    onPredict={() => onPredict(u.match.id)}
-                  />
-                ))}
-              </div>
-            </div>
-          )
-        })}
-      </div>
+    <div>
+      {visibleDays.map((day) => {
+        const label = formatDayLabel(day.date)
+        const sorted = [...day.matches].sort((a, b) =>
+          a.match.kickoffTime.localeCompare(b.match.kickoffTime),
+        )
+        return (
+          <div key={day.key}>
+            <DayStrip
+              label={label}
+              count={day.matches.length}
+              today={label === 'TODAY'}
+            />
+            {sorted.map((m) => (
+              <UpcomingCard
+                key={m.match.id}
+                summary={m}
+                onPredict={() => onPredict(m.match.id)}
+              />
+            ))}
+          </div>
+        )
+      })}
 
       {remainingDays > 0 && nextDay && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full text-xs"
+        <button
+          type="button"
           onClick={() => setDaysShown((d) => d + 1)}
+          className="w-full mt-3 py-2 text-xs font-semibold text-foreground hover:text-primary transition-colors"
         >
-          {`Load ${formatDayLabel(nextDay.date).toLowerCase().replace(/^\w/, (c) => c.toUpperCase())} `}
-          <span className="text-muted-foreground ml-1">
+          {`Load ${formatDayLabel(nextDay.date)} `}
+          <span className="text-muted-foreground">
             ({nextDay.matches.length}{' '}
             {nextDay.matches.length === 1 ? 'match' : 'matches'})
           </span>
-          <ChevronDown className="h-3.5 w-3.5 ml-1" />
-        </Button>
+        </button>
       )}
 
       {daysShown > DAYS_INITIAL && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full text-xs text-muted-foreground"
+        <button
+          type="button"
           onClick={() => setDaysShown(DAYS_INITIAL)}
+          className="w-full mt-1 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
         >
           {'Collapse'}
-        </Button>
+        </button>
       )}
-    </section>
+    </div>
   )
 }
 
-// ── Recent Results: last completed round only, expandable ───────────────────
+function UpcomingCard({
+  summary,
+  onPredict,
+}: {
+  summary: UpcomingMatchSummary
+  onPredict: () => void
+}) {
+  const { match, userPrediction } = summary
+  const locked = userPrediction !== null
+  const booster = userPrediction?.booster ?? null
 
-function RecentResultsSection({
+  const [now] = useState(() => Date.now())
+  const minsToKickoff = Math.floor(
+    (new Date(match.kickoffTime).getTime() - now) / 60_000,
+  )
+  const urgent = !locked && minsToKickoff > 0 && minsToKickoff < URGENT_KICKOFF_MIN
+
+  const rail = !locked
+    ? 'bg-transparent'
+    : booster
+      ? BOOSTER_RAIL[booster]
+      : 'bg-primary'
+
+  return (
+    <button
+      type="button"
+      onClick={onPredict}
+      aria-label={
+        locked
+          ? `Edit your prediction for ${teamName(match.homeTeam)} vs ${teamName(match.awayTeam)}`
+          : `Predict ${teamName(match.homeTeam)} vs ${teamName(match.awayTeam)}`
+      }
+      className="relative block w-full text-left overflow-hidden rounded-[12px] border border-border bg-card mb-[10px] hover:border-hair-strong transition-colors"
+    >
+      <span className={cn('absolute left-0 top-0 bottom-0 w-[3px]', rail)} />
+
+      {/* top: round + kickoff (with optional urgency pill) */}
+      <div className="flex justify-between items-center pt-[11px] pr-[14px] pl-4">
+        <span className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground">
+          {match.round.name}
+        </span>
+        <span className="inline-flex items-center">
+          {urgent && (
+            <span className="inline-flex items-center gap-[5px] mr-2 rounded-full bg-destructive/[0.13] text-destructive px-2 py-[3px] font-mono text-[11px] font-extrabold tracking-[0.04em] leading-none">
+              <span className="size-[5px] rounded-full bg-destructive animate-pulse shrink-0" />
+              {formatCountdown(minsToKickoff)} {'left'}
+            </span>
+          )}
+          <span className="inline-flex items-baseline gap-1 font-display text-[18px] font-extrabold leading-none tracking-[-0.01em] text-foreground">
+            <span className="font-sans text-[9px] font-bold uppercase tracking-[0.18em] text-muted-foreground mr-0.5">
+              {'Kickoff'}
+            </span>
+            {formatClock(match.kickoffTime)}
+          </span>
+        </span>
+      </div>
+
+      {/* teams */}
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-[10px] pt-3 pb-[14px] pr-[14px] pl-4">
+        <div className="flex items-center gap-[9px] min-w-0">
+          <Crest team={match.homeTeam} size="sm" />
+          <span className="font-display text-[19px] font-extrabold uppercase tracking-[0.01em] leading-none truncate">
+            {teamName(match.homeTeam)}
+          </span>
+        </div>
+        <span className="font-display text-[13px] font-extrabold uppercase tracking-[0.14em] text-dim">
+          {'VS'}
+        </span>
+        <div className="flex flex-row-reverse items-center gap-[9px] min-w-0">
+          <Crest team={match.awayTeam} size="sm" />
+          <span className="font-display text-[19px] font-extrabold uppercase tracking-[0.01em] leading-none truncate">
+            {teamName(match.awayTeam)}
+          </span>
+        </div>
+      </div>
+
+      {/* foot: locked (pick + edit) or open (predict CTA) */}
+      {locked && userPrediction ? (
+        <div className="grid grid-cols-[1fr_auto] gap-3 items-center pt-[11px] pb-3 pr-[14px] pl-4 border-t border-border bg-[oklch(0.11_0.003_60)]">
+          <div className="flex flex-col gap-[3px] min-w-0">
+            <span className="text-[9px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground">
+              {'Your pick'}
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="font-display text-[28px] font-black leading-[0.9] tracking-[-0.03em] text-foreground">
+                {userPrediction.homeScore}
+                {'–'}
+                {userPrediction.awayScore}
+              </span>
+              {booster && <BoosterPill booster={booster} />}
+            </span>
+          </div>
+          <span className="bg-secondary text-foreground rounded-[8px] px-[14px] py-[9px] font-bold text-[12px] uppercase tracking-[0.04em]">
+            {'Edit'}
+          </span>
+        </div>
+      ) : (
+        <div className="pt-[11px] pb-3 pr-[14px] pl-4 border-t border-border bg-[oklch(0.11_0.003_60)]">
+          <span className="w-full bg-primary text-primary-foreground rounded-[8px] py-3 font-display text-[16px] font-black uppercase tracking-[0.08em] flex items-center justify-center gap-2">
+            {'Predict'}
+            <span className="text-[18px] leading-none">{'→'}</span>
+          </span>
+        </div>
+      )}
+    </button>
+  )
+}
+
+// ── Played tab ───────────────────────────────────────────────────────────────
+
+// Played list is a flat feed of finished matches, most-recent first,
+// paginated by match count. Round names are kept as section headers
+// (inserted whenever the round changes within the visible slice).
+const PLAYED_INITIAL = 5
+const PLAYED_STEP = 5
+
+function PlayedTab({
   completed,
   leagueId,
 }: {
   completed: CompletedMatchSummary[]
   leagueId: UUID
 }) {
-  // Group by round and pick the most recent round (by kickoff_time within
-  // the round). For league play this naturally maps to "last matchday";
-  // for cups it's the most recent stage played.
-  const { defaultRound, allRounds } = useMemo(() => {
-    const byRound = new Map<UUID, CompletedMatchSummary[]>()
-    for (const m of completed) {
-      const arr = byRound.get(m.match.round.id) ?? []
-      arr.push(m)
-      byRound.set(m.match.round.id, arr)
-    }
-    // Sort rounds by latest match in each round, descending.
-    const rounds = Array.from(byRound.entries())
-      .map(([id, matches]) => ({
-        id,
-        name: matches[0].match.round.name,
-        sortOrder: matches[0].match.round.sortOrder,
-        matches: matches.sort((a, b) =>
-          b.match.kickoffTime.localeCompare(a.match.kickoffTime),
-        ),
-        latestKickoff: matches.reduce(
-          (latest, m) =>
-            m.match.kickoffTime > latest ? m.match.kickoffTime : latest,
-          '',
-        ),
-      }))
-      .sort((a, b) => b.latestKickoff.localeCompare(a.latestKickoff))
-    return {
-      defaultRound: rounds[0],
-      allRounds: rounds,
-    }
-  }, [completed])
-
-  const [showAll, setShowAll] = useState(false)
-  const visible = showAll ? allRounds : [defaultRound]
-
-  return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-          {'Recent Results'}
-        </h2>
-        <span className="text-xs text-muted-foreground">
-          {showAll
-            ? `${allRounds.length} rounds`
-            : defaultRound.name}
-        </span>
-      </div>
-
-      {visible.map((round) => (
-        <div key={round.id} className="space-y-1.5">
-          {showAll && (
-            <h3 className="text-[11px] font-semibold text-muted-foreground/70 uppercase tracking-wider px-1">
-              {round.name}
-            </h3>
-          )}
-          <Card className="bg-card border-border overflow-hidden divide-y divide-border/30">
-            {round.matches.map((m) => (
-              <CompletedMatchRow
-                key={m.match.id}
-                summary={m}
-                leagueId={leagueId}
-              />
-            ))}
-          </Card>
-        </div>
-      ))}
-
-      {allRounds.length > 1 && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full text-xs"
-          onClick={() => setShowAll((v) => !v)}
-        >
-          {showAll
-            ? 'Show less'
-            : `Show all ${allRounds.length} rounds`}
-          <ChevronDown
-            className={cn(
-              'h-3.5 w-3.5 ml-1 transition-transform',
-              showAll && 'rotate-180',
-            )}
-          />
-        </Button>
-      )}
-    </section>
+  const sorted = useMemo(
+    () =>
+      [...completed].sort((a, b) =>
+        b.match.kickoffTime.localeCompare(a.match.kickoffTime),
+      ),
+    [completed],
   )
-}
+  const [visibleCount, setVisibleCount] = useState(PLAYED_INITIAL)
 
-// ── Live match card with on-expand prediction table ─────────────────────────
-
-function LiveMatchCard({
-  summary,
-  leagueId,
-  expanded,
-  onToggle,
-}: {
-  summary: LiveMatchSummary
-  leagueId: UUID
-  expanded: boolean
-  onToggle: () => void
-}) {
-  const { match, userPrediction } = summary
-  // Score / status push updates while this card is on screen.
-  useRealtimeMatch(match.id, leagueId)
-  const liveMinute = useLiveMinute(match.liveMinute, match.status, match.kickoffTime)
-  const home = match.homeTeam?.name ?? 'TBD'
-  const away = match.awayTeam?.name ?? 'TBD'
-  const userPts = userPrediction?.points?.total ?? 0
-  const hasBooster = userPrediction?.booster != null
-
-  return (
-    <Card
-      className={cn(
-        'bg-card border-border overflow-hidden transition-colors',
-        expanded && 'border-primary/30',
-      )}
-    >
-      <button className="w-full text-left" onClick={onToggle}>
-        <div className="px-4 pt-4 pb-3">
-          <div className="flex items-center justify-between mb-3">
-            <Badge variant="destructive" className="gap-1 text-xs">
-              <Circle className="h-1.5 w-1.5 fill-current" />
-              {liveMinute ?? 'LIVE'}
-            </Badge>
-            {userPrediction && (
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-muted-foreground">{'You:'}</span>
-                <span className="font-mono font-bold text-foreground">
-                  {userPrediction.homeScore}-{userPrediction.awayScore}
-                </span>
-                <span className="text-muted-foreground">{'='}</span>
-                <div className="flex items-center gap-0.5">
-                  {hasBooster && <Zap className="h-3 w-3 text-primary" />}
-                  <span className={cn('font-bold', POINTS_COLOR[pointsTier(userPts)])}>
-                    {userPts > 0 ? `+${userPts}` : '0'}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center justify-center gap-5">
-            <div className="flex-1 text-right">
-              <span className="font-bold text-foreground">{home}</span>
-            </div>
-            <div className="flex items-baseline gap-2.5">
-              <AnimatedScore
-                value={match.homeScore ?? 0}
-                className="text-3xl font-bold text-foreground"
-              />
-              <span className="text-muted-foreground font-medium">{'-'}</span>
-              <AnimatedScore
-                value={match.awayScore ?? 0}
-                className="text-3xl font-bold text-foreground"
-              />
-            </div>
-            <div className="flex-1 text-left">
-              <span className="font-bold text-foreground">{away}</span>
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center justify-center gap-1 px-4 pb-3 text-xs text-muted-foreground">
-          <span>
-            {expanded
-              ? 'Hide predictions'
-              : `${summary.predictionCount} predictions`}
-          </span>
-          <ChevronDown
-            className={cn(
-              'h-3.5 w-3.5 transition-transform',
-              expanded && 'rotate-180',
-            )}
-          />
-        </div>
-      </button>
-
-      {expanded && <ExpandedPredictionTable matchId={match.id} leagueId={leagueId} />}
-
-      <div className="px-4 pb-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full text-xs"
-          asChild
-        >
-          <Link href={`/matches/${match.id}?league=${leagueId}`}>
-            {'Open match details'}
-            <ChevronRight className="h-3.5 w-3.5 ml-1" />
-          </Link>
-        </Button>
-      </div>
-    </Card>
-  )
-}
-
-function ExpandedPredictionTable({
-  matchId,
-  leagueId,
-}: {
-  matchId: UUID
-  leagueId: UUID
-}) {
-  const { data, isLoading } = useMatch(matchId, leagueId)
-  const { data: currentUser } = useCurrentUser()
-  if (isLoading || !data) {
+  if (completed.length === 0) {
     return (
-      <div className="border-t border-border px-4 py-6 text-center text-xs text-muted-foreground">
-        {'Loading predictions…'}
+      <div className="mt-3 rounded-[12px] border border-border bg-card px-5 py-8 text-center">
+        <p className="text-sm font-semibold text-foreground">
+          {'No results yet'}
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          {'Played matches will show up here once they finish.'}
+        </p>
       </div>
     )
   }
-  const sorted = [...data.predictions].sort(
-    (a, b) => (b.points?.total ?? 0) - (a.points?.total ?? 0),
-  )
-  return (
-    <div className="border-t border-border">
-      <div className="flex items-center text-[11px] text-muted-foreground font-semibold uppercase tracking-wider px-4 py-2 bg-secondary/30">
-        <span className="flex-1">{'Player'}</span>
-        <span className="w-14 text-center">{'Pick'}</span>
-        <span className="w-12 text-center">{'Base'}</span>
-        <span className="w-14 text-right">{'Total'}</span>
-      </div>
-      <div className="divide-y divide-border/30">
-        {sorted.map((p) => {
-          const isUser = p.userId === currentUser?.id
-          const total = p.points?.total ?? 0
-          const base = p.points?.base ?? 0
-          const booster = p.booster
-          const boostBg =
-            booster === 'x5'
-              ? 'border-l-amber-400 bg-amber-400/[0.04]'
-              : booster === 'x3'
-                ? 'border-l-sky-400 bg-sky-400/[0.04]'
-                : booster === 'x2'
-                  ? 'border-l-emerald-400 bg-emerald-400/[0.04]'
-                  : 'border-l-transparent'
-          return (
-            <div
-              key={p.id}
-              className={cn(
-                'flex items-center pl-4 pr-4 py-2.5 text-sm border-l-2 transition-colors',
-                boostBg,
-                isUser && !booster && 'bg-primary/5',
-                isUser && 'border-l-primary',
-              )}
-            >
-              <div className="flex-1 flex items-center gap-1.5 min-w-0">
-                <span
-                  className={cn(
-                    'font-medium truncate',
-                    isUser ? 'text-primary' : 'text-foreground',
-                  )}
-                >
-                  {p.profile.displayName}
-                </span>
-                {booster && (
-                  <span
-                    className={cn(
-                      'flex-shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] font-black leading-tight',
-                      booster === 'x5'
-                        ? 'bg-amber-400/15 text-amber-400'
-                        : booster === 'x3'
-                          ? 'bg-sky-400/15 text-sky-400'
-                          : 'bg-emerald-400/15 text-emerald-400',
-                    )}
-                  >
-                    <Zap className="h-2 w-2" />
-                    {booster}
-                  </span>
-                )}
-              </div>
-              <span className="w-14 text-center font-mono font-bold text-foreground">
-                {p.homeScore}-{p.awayScore}
-              </span>
-              <span className="w-12 text-center text-muted-foreground tabular-nums text-xs">
-                {base}
-              </span>
-              <span
-                className={cn(
-                  'w-14 text-right font-bold tabular-nums',
-                  POINTS_COLOR[pointsTier(total)],
-                )}
-              >
-                {total > 0 ? `+${total}` : '0'}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
 
-// ── Standings ────────────────────────────────────────────────────────────────
+  const visible = sorted.slice(0, visibleCount)
+  const remaining = sorted.length - visible.length
 
-function StandingsTable({
-  standings,
-  hasLive,
-}: {
-  standings: StandingRow[]
-  hasLive: boolean
-}) {
-  return (
-    <Card className="bg-card border-border overflow-hidden">
-      <div className="flex items-center text-[11px] text-muted-foreground font-semibold uppercase tracking-wider px-4 py-2.5 border-b border-border bg-secondary/30">
-        <span className="w-7 text-center">{'#'}</span>
-        <span className="flex-1 pl-2">{'Player'}</span>
-        {/* "Live" column shown always — values render as em-dash when no
-            points are in flight, so the column structure is consistent
-            regardless of whether matches are happening right now. */}
-        <span className="w-14 text-center">{'Live'}</span>
-        <span className="w-14 text-right">{'Total'}</span>
-        <span className="w-10 text-right">{'Exact'}</span>
-        {hasLive && <span className="w-7" />}
-      </div>
-      <div className="divide-y divide-border/30">
-        {standings.map((row) => (
-          <StandingRowView key={row.profile.id} row={row} hasLive={hasLive} />
-        ))}
-      </div>
-    </Card>
-  )
-}
+  // Bucket the visible slice into contiguous round groups for the pills.
+  const groups: { roundId: UUID; name: string; matches: CompletedMatchSummary[] }[] = []
+  for (const m of visible) {
+    const last = groups[groups.length - 1]
+    if (last && last.roundId === m.match.round.id) {
+      last.matches.push(m)
+    } else {
+      groups.push({
+        roundId: m.match.round.id,
+        name: m.match.round.name,
+        matches: [m],
+      })
+    }
+  }
 
-function StandingRowView({
-  row,
-  hasLive,
-}: {
-  row: StandingRow
-  hasLive: boolean
-}) {
-  const isUser = row.isCurrentUser
   return (
-    <div
-      className={cn(
-        'flex items-center px-4 py-2.5 text-sm',
-        isUser && 'bg-primary/5',
-      )}
-    >
-      <span
-        className={cn(
-          'w-7 text-center font-bold tabular-nums text-xs',
-          row.position === 1 && 'text-primary',
-          row.position <= 3 && row.position !== 1 && 'text-foreground',
-          row.position > 3 && 'text-muted-foreground',
-        )}
-      >
-        {row.position}
-      </span>
-      <div className="flex-1 pl-2 flex items-center gap-1.5 min-w-0">
-        {row.position === 1 && (
-          <Trophy className="h-3.5 w-3.5 text-primary flex-shrink-0" />
-        )}
-        <span
-          className={cn(
-            'font-medium truncate',
-            isUser ? 'text-primary' : 'text-foreground',
-          )}
-        >
-          {row.profile.displayName}
-        </span>
-        {row.boostersUsed > 0 && (
-          <Zap className="h-3 w-3 text-primary/60 flex-shrink-0" />
-        )}
-      </div>
-      <span
-        className={cn(
-          'w-14 text-center font-mono font-bold text-sm tabular-nums',
-          row.matchdayPoints > 0
-            ? 'text-primary'
-            : 'text-muted-foreground/40',
-        )}
-      >
-        {row.matchdayPoints > 0 ? `+${row.matchdayPoints}` : '—'}
-      </span>
-      <span className="w-14 text-right font-bold text-foreground tabular-nums">
-        {row.totalPoints + row.matchdayPoints}
-      </span>
-      <span className="w-10 text-right text-xs text-muted-foreground tabular-nums">
-        {row.exactScores}
-      </span>
-      {hasLive && (
-        <div className="w-7 flex justify-center">
-          {row.positionChange > 0 && (
-            <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />
-          )}
-          {row.positionChange < 0 && (
-            <TrendingDown className="h-3.5 w-3.5 text-destructive" />
-          )}
-          {row.positionChange === 0 && (
-            <MinusIcon className="h-3 w-3 text-muted-foreground/30" />
-          )}
+    <div>
+      {groups.map((g, i) => (
+        <div key={`${g.roundId}-${i}`}>
+          <DayStrip label={g.name} count={g.matches.length} />
+          {g.matches.map((m) => (
+            <PlayedCard key={m.match.id} summary={m} leagueId={leagueId} />
+          ))}
         </div>
+      ))}
+
+      {remaining > 0 && (
+        <button
+          type="button"
+          onClick={() => setVisibleCount((c) => c + PLAYED_STEP)}
+          className="w-full mt-3 py-2 text-xs font-semibold text-foreground hover:text-primary transition-colors"
+        >
+          {`Load ${Math.min(PLAYED_STEP, remaining)} more `}
+          <span className="text-muted-foreground">({remaining} {'left'})</span>
+        </button>
+      )}
+
+      {visibleCount > PLAYED_INITIAL && (
+        <button
+          type="button"
+          onClick={() => setVisibleCount(PLAYED_INITIAL)}
+          className="w-full mt-1 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {'Collapse'}
+        </button>
       )}
     </div>
   )
 }
 
-// ── Completed match row ──────────────────────────────────────────────────────
+function resultStatus(
+  match: Match,
+  pred: CompletedMatchSummary['userPrediction'],
+): 'exact' | 'outcome' | 'wrong' | null {
+  if (!pred) return null
+  const hs = match.homeScore ?? 0
+  const as = match.awayScore ?? 0
+  if (pred.homeScore === hs && pred.awayScore === as) return 'exact'
+  if (Math.sign(pred.homeScore - pred.awayScore) === Math.sign(hs - as))
+    return 'outcome'
+  return 'wrong'
+}
 
-function CompletedMatchRow({
+const PLAYED_RAIL = {
+  exact: 'bg-primary',
+  outcome: 'bg-foreground/35',
+  wrong: 'bg-destructive/50',
+  none: 'bg-transparent',
+} as const
+
+const PLAYED_TAG = {
+  exact: 'bg-primary text-background',
+  outcome: 'bg-secondary text-foreground',
+  wrong: 'bg-transparent border border-destructive text-destructive',
+} as const
+
+function PlayedCard({
   summary,
   leagueId,
 }: {
@@ -876,258 +1151,113 @@ function CompletedMatchRow({
   leagueId: UUID
 }) {
   const { match, userPrediction } = summary
-  const home = match.homeTeam?.name ?? 'TBD'
-  const away = match.awayTeam?.name ?? 'TBD'
-  const homeScore = match.homeScore ?? 0
-  const awayScore = match.awayScore ?? 0
-
-  // Status badge in the top-right of every card. Computed once so the
-  // layout below stays branchless.
-  let statusBadge: React.ReactNode
-  if (!userPrediction) {
-    statusBadge = (
-      <Badge variant="secondary" className="text-xs gap-1 text-muted-foreground">
-        {'No prediction'}
-      </Badge>
-    )
-  } else {
-    const isExact =
-      userPrediction.homeScore === homeScore &&
-      userPrediction.awayScore === awayScore
-    const correctOutcome =
-      Math.sign(userPrediction.homeScore - userPrediction.awayScore) ===
-      Math.sign(homeScore - awayScore)
-    if (isExact) {
-      statusBadge = (
-        <Badge className="bg-primary/15 text-primary border-0 text-xs gap-1">
-          <Check className="h-3 w-3" />
-          {'Exact'}
-        </Badge>
-      )
-    } else if (correctOutcome) {
-      statusBadge = (
-        <Badge variant="secondary" className="text-xs gap-1">
-          <Check className="h-3 w-3 text-emerald-500" />
-          {'Outcome'}
-        </Badge>
-      )
-    } else {
-      statusBadge = (
-        <Badge variant="secondary" className="text-xs gap-1 text-muted-foreground">
-          <X className="h-3 w-3 text-destructive" />
-          {'Wrong'}
-        </Badge>
-      )
-    }
-  }
-
+  const hs = match.homeScore ?? 0
+  const as = match.awayScore ?? 0
+  const status = resultStatus(match, userPrediction)
   const total = userPrediction?.points?.total ?? 0
+  const homeLost = hs < as
+  const awayLost = as < hs
+
+  const tagLabel =
+    status === 'exact'
+      ? 'Exact'
+      : status === 'outcome'
+        ? 'Outcome'
+        : status === 'wrong'
+          ? 'Missed'
+          : 'No pick'
 
   return (
     <Link
       href={`/matches/${match.id}?league=${leagueId}`}
-      className="block px-4 py-3 hover:bg-muted/40 transition-colors"
+      className="relative block overflow-hidden rounded-[12px] border border-border bg-card mb-[10px] hover:border-hair-strong transition-colors"
     >
-      <div className="flex items-center justify-between mb-2">
-        <Badge variant="secondary" className="text-xs">
-          {match.round.name}
-        </Badge>
-        {statusBadge}
+      <span
+        className={cn(
+          'absolute left-0 top-0 bottom-0 w-[3px]',
+          PLAYED_RAIL[status ?? 'none'],
+        )}
+      />
+
+      <div className="flex justify-between items-center pt-[11px] pr-[14px] pl-4">
+        <span className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground">
+          {match.round.name} {'· Final'}
+        </span>
+        <span
+          className={cn(
+            'font-display text-[13px] font-black uppercase tracking-[0.1em] leading-none rounded-[4px] px-[9px] py-[3px]',
+            status ? PLAYED_TAG[status] : 'bg-secondary text-muted-foreground',
+          )}
+        >
+          {tagLabel}
+        </span>
       </div>
 
-      <div className="flex items-center gap-4">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between text-sm gap-2">
-            <span className="font-semibold text-foreground truncate">{home}</span>
-            <span className="font-bold text-foreground tabular-nums">
-              {homeScore}
+      <div className="grid grid-cols-[1fr_1px_auto] gap-[14px] items-center pt-3 pb-[14px] pr-[14px] pl-4">
+        <div className="flex flex-col gap-1 min-w-0">
+          <div
+            className={cn(
+              'flex items-center justify-between gap-[10px]',
+              homeLost && 'opacity-45',
+            )}
+          >
+            <span className="flex items-center gap-2 min-w-0 font-display text-[17px] font-bold uppercase tracking-[0.005em]">
+              <Crest team={match.homeTeam} size="xs" />
+              <span className="truncate">{teamName(match.homeTeam)}</span>
+            </span>
+            <span className="font-display text-[22px] font-extrabold tracking-[-0.03em] leading-none">
+              {hs}
             </span>
           </div>
-          <div className="flex items-center justify-between text-sm gap-2">
-            <span className="font-semibold text-foreground truncate">{away}</span>
-            <span className="font-bold text-foreground tabular-nums">
-              {awayScore}
+          <div
+            className={cn(
+              'flex items-center justify-between gap-[10px]',
+              awayLost && 'opacity-45',
+            )}
+          >
+            <span className="flex items-center gap-2 min-w-0 font-display text-[17px] font-bold uppercase tracking-[0.005em]">
+              <Crest team={match.awayTeam} size="xs" />
+              <span className="truncate">{teamName(match.awayTeam)}</span>
+            </span>
+            <span className="font-display text-[22px] font-extrabold tracking-[-0.03em] leading-none">
+              {as}
             </span>
           </div>
         </div>
-        <div className="w-px h-8 bg-border" />
-        <div className="flex flex-col items-end w-16 flex-shrink-0">
+
+        <span className="bg-border h-[48px] w-px" />
+
+        <div className="flex flex-col items-end gap-[2px] min-w-[70px]">
+          <span className="text-[9px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground">
+            {'You'}
+          </span>
           {userPrediction ? (
             <>
-              <span className="text-xs text-muted-foreground">
-                {userPrediction.homeScore}-{userPrediction.awayScore}
+              <span className="font-mono text-[11px] font-bold text-muted-foreground">
+                {userPrediction.homeScore}
+                {'–'}
+                {userPrediction.awayScore}
               </span>
               <span
                 className={cn(
-                  'text-sm font-bold tabular-nums',
-                  POINTS_COLOR[pointsTier(total)],
+                  'font-display text-[34px] font-black leading-[0.85] tracking-[-0.04em] mt-0.5',
+                  total >= 5
+                    ? 'text-primary'
+                    : total >= 1
+                      ? 'text-foreground'
+                      : 'text-dim',
                 )}
               >
                 {total > 0 ? `+${total}` : '0'}
               </span>
             </>
           ) : (
-            <span className="text-xs text-muted-foreground/50">{'—'}</span>
+            <span className="font-display text-[34px] font-black text-dim leading-[0.85] mt-0.5">
+              {'—'}
+            </span>
           )}
         </div>
       </div>
     </Link>
   )
 }
-
-// ── Upcoming match card ──────────────────────────────────────────────────────
-//
-// Visual rules:
-//   • Chip top-left: competition name (only when league tracks multiple)
-//     and round name
-//   • Time top-right: gets red/urgent treatment when match is < 2h away
-//     AND user hasn't predicted yet (drives them to predict NOW)
-//   • Booster color: card border + background tinted to the booster color
-//     when the user's prediction has a booster applied. Mirrors the
-//     treatment on live-match prediction rows.
-//   • Predicted state: large prediction badge + bold Edit button (high
-//     visibility — you should always know if you've already picked).
-//   • Unpredicted state: full-width primary CTA.
-
-const URGENT_KICKOFF_MIN = 2 * 60 // 2 hours
-
-const BOOSTER_CARD_STYLES: Record<
-  Exclude<NonNullable<UpcomingMatchSummary['userPrediction']>['booster'], null>,
-  { border: string; bg: string; pillBg: string; pillText: string }
-> = {
-  x2: {
-    border: 'border-emerald-400/50',
-    bg: 'bg-emerald-400/[0.03]',
-    pillBg: 'bg-emerald-400/15',
-    pillText: 'text-emerald-400',
-  },
-  x3: {
-    border: 'border-sky-400/50',
-    bg: 'bg-sky-400/[0.03]',
-    pillBg: 'bg-sky-400/15',
-    pillText: 'text-sky-400',
-  },
-  x5: {
-    border: 'border-amber-400/50',
-    bg: 'bg-amber-400/[0.03]',
-    pillBg: 'bg-amber-400/15',
-    pillText: 'text-amber-400',
-  },
-}
-
-function UpcomingMatchCard({
-  summary,
-  competitionName,
-  onPredict,
-}: {
-  summary: UpcomingMatchSummary
-  competitionName: string | null
-  onPredict: () => void
-}) {
-  const { match, userPrediction } = summary
-  const home = match.homeTeam?.name ?? 'TBD'
-  const away = match.awayTeam?.name ?? 'TBD'
-
-  // Capture wall-time once at mount. Re-evaluated on every TanStack
-  // refetch (default staleTime 30s) which is plenty fresh for the
-  // "urgent" threshold; we don't need a per-second ticker.
-  const [now] = useState(() => Date.now())
-  const minutesToKickoff =
-    (new Date(match.kickoffTime).getTime() - now) / 60_000
-  const isUrgent =
-    !userPrediction &&
-    minutesToKickoff > 0 &&
-    minutesToKickoff < URGENT_KICKOFF_MIN
-
-  const booster = userPrediction?.booster ?? null
-  const boostStyle = booster ? BOOSTER_CARD_STYLES[booster] : null
-
-  return (
-    <Card
-      className={cn(
-        'p-4 bg-card border-border transition-colors',
-        boostStyle && [boostStyle.border, boostStyle.bg],
-      )}
-    >
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="flex items-center gap-1.5 min-w-0">
-          {competitionName && (
-            <Badge variant="secondary" className="text-[10px] flex-shrink-0">
-              {competitionName}
-            </Badge>
-          )}
-          <Badge variant="secondary" className="text-[10px] truncate">
-            {match.round.name}
-          </Badge>
-        </div>
-        <div
-          className={cn(
-            'flex items-center gap-1 flex-shrink-0',
-            isUrgent
-              ? 'text-destructive font-bold animate-pulse'
-              : 'text-muted-foreground',
-          )}
-        >
-          <Clock className={cn('h-3 w-3', isUrgent && 'h-3.5 w-3.5')} />
-          <span
-            className={cn('font-medium', isUrgent ? 'text-sm' : 'text-xs')}
-          >
-            {formatKickoff(match.kickoffTime)}
-          </span>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between text-base mb-3">
-        <span className="font-semibold text-foreground">{home}</span>
-        <span className="text-xs text-muted-foreground">{'vs'}</span>
-        <span className="font-semibold text-foreground">{away}</span>
-      </div>
-
-      {userPrediction ? (
-        <button
-          type="button"
-          onClick={onPredict}
-          className={cn(
-            'w-full pt-3 border-t border-border/60 flex items-center justify-between gap-3 group',
-            'rounded-b -mx-4 px-4 -mb-4 pb-4 hover:bg-muted/30 transition-colors',
-          )}
-        >
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
-              {'Your pick'}
-            </span>
-            <span className="font-mono font-bold text-lg tabular-nums text-foreground">
-              {userPrediction.homeScore}-{userPrediction.awayScore}
-            </span>
-            {booster && boostStyle && (
-              <span
-                className={cn(
-                  'inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[10px] font-black leading-tight',
-                  boostStyle.pillBg,
-                  boostStyle.pillText,
-                )}
-              >
-                <Zap className="h-2.5 w-2.5" />
-                {booster}
-              </span>
-            )}
-          </div>
-          <span className="flex items-center gap-1 text-xs font-semibold text-primary group-hover:underline flex-shrink-0">
-            {'Edit'}
-            <ChevronRight className="h-3.5 w-3.5" />
-          </span>
-        </button>
-      ) : (
-        <Button
-          variant={isUrgent ? 'destructive' : 'default'}
-          className="w-full mt-1"
-          onClick={onPredict}
-        >
-          {isUrgent ? 'Predict now' : 'Make Prediction'}
-          <ChevronRight className="h-4 w-4 ml-1" />
-        </Button>
-      )}
-    </Card>
-  )
-}
-

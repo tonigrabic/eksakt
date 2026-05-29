@@ -203,13 +203,19 @@ export function liveMatchSummary(args: {
   memberCount: number
 }): LiveMatchSummary {
   const { match, predictions, userId, profileById, memberCount } = args
-  const userPred = predictions.find((p) => p.userId === userId) ?? null
+  const ranked = predictions
+    .map((p) => toDetailed(p, match, predictions, profileById, memberCount))
+    .sort(
+      (a, b) =>
+        (b.points?.total ?? 0) - (a.points?.total ?? 0) ||
+        a.profile.displayName.localeCompare(b.profile.displayName),
+    )
+  const userPred = ranked.find((p) => p.userId === userId) ?? null
   return {
     match,
-    predictionCount: predictions.length,
-    userPrediction: userPred
-      ? toDetailed(userPred, match, predictions, profileById, memberCount)
-      : null,
+    predictionCount: ranked.length,
+    userPrediction: userPred,
+    rankedPredictions: ranked,
   }
 }
 

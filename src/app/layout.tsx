@@ -1,11 +1,27 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Archivo, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { QueryProvider } from "@/components/providers/query-provider";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Archivo drives the whole UI (--font-sans); Big Shoulders Display is the
+// condensed display face used for big scores / point totals (--font-display).
+const archivo = Archivo({
+  variable: "--font-archivo",
   subsets: ["latin"],
+});
+
+// Self-hosted "Big Shoulders Display" (variable, 400–900). next/font/google
+// only exposes the renamed "Big Shoulders" family — and Turbopack has no
+// fallback metrics for it, which produced a build warning. Hosting the woff2
+// locally gives us the exact face the design specified and skips the
+// Google-metrics lookup entirely (no warning).
+const bigShoulders = localFont({
+  src: "./fonts/BigShouldersDisplay-latin.woff2",
+  variable: "--font-big-shoulders",
+  weight: "400 900",
+  display: "swap",
+  adjustFontFallback: false,
 });
 
 const geistMono = Geist_Mono({
@@ -36,7 +52,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
+        className={`${archivo.variable} ${bigShoulders.variable} ${geistMono.variable} font-sans antialiased`}
       >
         <QueryProvider>{children}</QueryProvider>
       </body>

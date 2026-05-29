@@ -27,6 +27,7 @@ import {
 import { computePoints, computeRarity } from '@/lib/scoring'
 import type {
   AddLeagueCompetitionInput,
+  BoosterCounts,
   Competition,
   CreateLeagueInput,
   CreateLeagueResult,
@@ -357,6 +358,31 @@ export async function getMyLeagues(): Promise<MyLeaguesPayload> {
 
 // ── League detail ───────────────────────────────────────────────────────────
 
+// Map of profile.id → standings position computed from finished matches
+// only (live matches excluded). Passed to computeStandings as the
+// `beforeSnapshot` so the ▲/▼ movement column reflects how live results
+// are currently shifting positions. Returns undefined when nothing is
+// live (no movement to show, avoids a redundant pass).
+function positionSnapshotBeforeLive(
+  members: LeagueMember[],
+  matches: Match[],
+  predictions: Prediction[],
+  leaguePool: BoosterCounts,
+): Record<UUID, number> | undefined {
+  const hasLive = matches.some((m) => m.status === 'live')
+  if (!hasLive) return undefined
+
+  const before = computeStandings({
+    members,
+    matches: matches.filter((m) => m.status !== 'live'),
+    predictions,
+    leaguePool,
+  })
+  const snapshot: Record<UUID, number> = {}
+  for (const row of before) snapshot[row.profile.id] = row.position
+  return snapshot
+}
+
 export async function getLeagueDetail(
   leagueId: UUID,
 ): Promise<LeagueDetailPayload> {
@@ -372,6 +398,12 @@ export async function getLeagueDetail(
     predictions,
     leaguePool: league.settings.boosters.pool,
     currentUserId: userId,
+    beforeSnapshot: positionSnapshotBeforeLive(
+      members,
+      matches,
+      predictions,
+      league.settings.boosters.pool,
+    ),
   })
   const profileById = new Map(members.map((m) => [m.userId, m.profile]))
 
@@ -465,6 +497,12 @@ export async function getMatchDetail(
     predictions: allLeaguePredictions,
     leaguePool: league.settings.boosters.pool,
     currentUserId: userId,
+    beforeSnapshot: positionSnapshotBeforeLive(
+      members,
+      allLeagueMatches,
+      allLeaguePredictions,
+      league.settings.boosters.pool,
+    ),
   })
 
   const userPredRaw = predictions.find((p) => p.userId === userId) ?? null

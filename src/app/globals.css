@@ -39,48 +39,60 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
+/* Dark theme — retuned to the "Match-day board" design language:
+   warm-tinted neutrals (hue 60), brighter gold primary, and a blue
+   "info" token. Light mode (:root above) is intentionally left as-is. */
 .dark {
-  --background: oklch(0.12 0 0);
-  --foreground: oklch(0.98 0 0);
-  --card: oklch(0.16 0 0);
-  --card-foreground: oklch(0.98 0 0);
-  --popover: oklch(0.14 0 0);
-  --popover-foreground: oklch(0.98 0 0);
-  --primary: oklch(0.72 0.19 85);
-  --primary-foreground: oklch(0.12 0 0);
-  --secondary: oklch(0.22 0 0);
-  --secondary-foreground: oklch(0.98 0 0);
-  --muted: oklch(0.22 0 0);
-  --muted-foreground: oklch(0.58 0 0);
-  --accent: oklch(0.72 0.19 85);
-  --accent-foreground: oklch(0.12 0 0);
-  --destructive: oklch(0.55 0.22 25);
-  --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(0.24 0 0);
-  --input: oklch(0.24 0 0);
-  --ring: oklch(0.72 0.19 85);
-  --chart-1: oklch(0.72 0.19 85);
-  --chart-2: oklch(0.65 0.20 145);
-  --chart-3: oklch(0.60 0.18 265);
-  --chart-4: oklch(0.70 0.19 50);
+  --background: oklch(0.10 0.004 60);
+  --foreground: oklch(0.98 0.002 60);
+  --card: oklch(0.155 0.004 60);
+  --card-foreground: oklch(0.98 0.002 60);
+  --popover: oklch(0.135 0.004 60);
+  --popover-foreground: oklch(0.98 0.002 60);
+  --primary: oklch(0.84 0.18 78);
+  --primary-foreground: oklch(0.16 0.03 78);
+  --secondary: oklch(0.215 0.004 60);
+  --secondary-foreground: oklch(0.98 0.002 60);
+  --muted: oklch(0.215 0.004 60);
+  --muted-foreground: oklch(0.62 0.004 60);
+  --accent: oklch(0.84 0.18 78);
+  --accent-foreground: oklch(0.16 0.03 78);
+  --destructive: oklch(0.67 0.23 26);
+  --destructive-foreground: oklch(0.98 0.002 60);
+  --border: oklch(0.255 0.004 60);
+  --input: oklch(0.255 0.004 60);
+  --ring: oklch(0.84 0.18 78);
+  --chart-1: oklch(0.84 0.18 78);
+  --chart-2: oklch(0.78 0.20 142);
+  --chart-3: oklch(0.72 0.16 235);
+  --chart-4: oklch(0.74 0.18 75);
   --chart-5: oklch(0.68 0.17 320);
-  --sidebar: oklch(0.16 0 0);
-  --sidebar-foreground: oklch(0.98 0 0);
-  --sidebar-primary: oklch(0.72 0.19 85);
-  --sidebar-primary-foreground: oklch(0.12 0 0);
-  --sidebar-accent: oklch(0.22 0 0);
-  --sidebar-accent-foreground: oklch(0.98 0 0);
-  --sidebar-border: oklch(0.24 0 0);
-  --sidebar-ring: oklch(0.72 0.19 85);
-  --success: oklch(0.65 0.20 145);
-  --success-foreground: oklch(0.98 0 0);
-  --warning: oklch(0.70 0.19 50);
-  --warning-foreground: oklch(0.12 0 0);
+  --sidebar: oklch(0.155 0.004 60);
+  --sidebar-foreground: oklch(0.98 0.002 60);
+  --sidebar-primary: oklch(0.84 0.18 78);
+  --sidebar-primary-foreground: oklch(0.16 0.03 78);
+  --sidebar-accent: oklch(0.215 0.004 60);
+  --sidebar-accent-foreground: oklch(0.98 0.002 60);
+  --sidebar-border: oklch(0.255 0.004 60);
+  --sidebar-ring: oklch(0.84 0.18 78);
+  --success: oklch(0.78 0.20 142);
+  --success-foreground: oklch(0.14 0.03 142);
+  --warning: oklch(0.82 0.17 85);
+  --warning-foreground: oklch(0.16 0.03 85);
+  --info: oklch(0.72 0.16 235);
+  --info-foreground: oklch(0.98 0.01 235);
+  /* Extra neutral steps the "Stadium Broadcast" design leans on:
+     raised (crest fills), hair-strong (crest borders / dashed rules),
+     dim (tertiary numerals). */
+  --raised: oklch(0.175 0.004 60);
+  --hair-strong: oklch(0.34 0.004 60);
+  --dim: oklch(0.42 0.004 60);
 }
 
 @theme inline {
-  --font-sans: 'Geist', 'Geist Fallback';
-  --font-mono: 'Geist Mono', 'Geist Mono Fallback';
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-display: var(--font-big-shoulders), var(--font-archivo), sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -121,6 +133,11 @@
   --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-raised: var(--raised);
+  --color-hair-strong: var(--hair-strong);
+  --color-dim: var(--dim);
 }
 
 @layer base {

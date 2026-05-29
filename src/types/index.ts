@@ -200,6 +200,11 @@ export type LiveMatchSummary = {
   match: Match // status === 'live'
   userPrediction: PredictionWithDetails | null
   predictionCount: number
+  // All picks for this match, ranked by points earned so far (desc).
+  // Lets the league board render an inline "who's scoring now" preview
+  // (top N + the user's pinned row) without a separate per-match fetch.
+  // Safe to expose: predictions are visible once a match is live.
+  rankedPredictions: PredictionWithDetails[]
 }
 
 export type UpcomingMatchSummary = {
