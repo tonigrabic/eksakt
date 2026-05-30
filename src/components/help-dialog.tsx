@@ -17,7 +17,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { HelpCircle, Plus, Hash, Zap, Target, Trophy } from "lucide-react";
+import { Clock, HelpCircle, Plus, Share2, Zap, Target, Trophy } from "lucide-react";
 
 interface HelpDialogProps {
   open?: boolean;
@@ -110,10 +110,22 @@ export function HelpDialog({
           </div>
         </div>
 
-        <p className="text-[11px] text-muted-foreground">
-          {"Tip: every league has its own invite code under "}
-          <Hash className="inline h-3 w-3 -mt-0.5" />
-          {" Settings — share it to add friends."}
+        <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs">
+          <div className="text-foreground font-semibold uppercase tracking-wider text-[10px] mb-1.5 inline-flex items-center gap-1.5">
+            <Clock className="h-3 w-3 text-primary" />
+            {"90' rule"}
+          </div>
+          <p className="text-muted-foreground leading-relaxed">
+            {
+              "Predictions are scored on the score after 90 minutes. Extra time, penalty shootouts and any goals beyond regulation don't count — once the match leaves regular time, points are locked in."
+            }
+          </p>
+        </div>
+
+        <p className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
+          {"Tip: tap the "}
+          <Share2 className="inline h-3 w-3" />
+          {" Invite icon at the top of any league to share an invite code."}
         </p>
       </DialogContent>
     </Dialog>
