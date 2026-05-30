@@ -31,6 +31,7 @@ import { useAddLeagueCompetition } from '@/hooks/use-add-league-competition'
 import { useUpdateLeague } from '@/hooks/use-update-league'
 import { useRemoveLeagueMember } from '@/hooks/use-remove-league-member'
 import { useCurrentUser } from '@/hooks/use-current-user'
+import { Avatar } from '@/components/match-ui'
 import type { Competition, League, LeagueMember, UUID } from '@/types'
 
 interface Props {
@@ -149,9 +150,7 @@ function MembersSection({
               key={m.userId}
               className="flex items-center gap-3 px-4 py-2.5"
             >
-              <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">
-                {m.profile.displayName.slice(0, 1).toUpperCase()}
-              </div>
+              <Avatar profile={m.profile} size="md" />
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium text-foreground truncate">
                   {m.profile.displayName}

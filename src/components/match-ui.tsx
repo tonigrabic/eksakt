@@ -106,6 +106,61 @@ export function Crest({
   )
 }
 
+const AVATAR_SIZE = {
+  md: 'size-[28px] text-[12px]',
+  sm: 'size-[22px] text-[10px]',
+  xs: 'size-[18px] text-[9px]',
+} as const
+
+export type AvatarSize = keyof typeof AVATAR_SIZE
+
+// First letter of the display name, for the no-image fallback.
+function avatarInitial(name: string): string {
+  const t = name.trim()
+  return t ? t[0].toUpperCase() : '?'
+}
+
+// Player avatar. Renders the uploaded image (`avatarUrl`) and falls back to
+// the display-name initial while loading or if the image fails. `ring`
+// gives the league leader a gold halo.
+export function Avatar({
+  profile,
+  size = 'sm',
+  ring = false,
+}: {
+  profile: { displayName: string; avatarUrl: string | null }
+  size?: AvatarSize
+  ring?: boolean
+}) {
+  const [broken, setBroken] = useState(false)
+  const showImg = Boolean(profile.avatarUrl) && !broken
+
+  return (
+    <span
+      className={cn(
+        'relative grid place-items-center overflow-hidden rounded-full bg-secondary border border-hair-strong shrink-0',
+        AVATAR_SIZE[size],
+        ring && 'ring-1 ring-primary/50',
+      )}
+    >
+      {showImg ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={profile.avatarUrl!}
+          alt={profile.displayName}
+          loading="lazy"
+          onError={() => setBroken(true)}
+          className="size-full object-cover"
+        />
+      ) : (
+        <span className="font-display font-extrabold leading-none text-muted-foreground">
+          {avatarInitial(profile.displayName)}
+        </span>
+      )}
+    </span>
+  )
+}
+
 export function BoosterPill({ booster }: { booster: Booster }) {
   return (
     <span

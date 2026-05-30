@@ -20,6 +20,7 @@ import { useLiveMinute } from '@/hooks/use-live-minute'
 import { AnimatedScore } from '@/components/animated-score'
 import { InviteFriendsModal } from '@/components/modals/invite-friends-modal'
 import {
+  Avatar,
   BOOSTER_PILL,
   BOOSTER_RAIL,
   BoosterPill,
@@ -636,6 +637,7 @@ function LivePickRow({
       <span className="w-[18px] text-center font-mono text-[11px] text-dim">
         {rank}
       </span>
+      <Avatar profile={p.profile} size="sm" />
       <span
         className={cn(
           'flex-1 truncate text-[13px]',
@@ -781,7 +783,7 @@ function StandingRowView({
   return (
     <div
       className={cn(
-        'grid items-center py-[9px] pr-[14px] border-b border-border last:border-b-0 text-[13px]',
+        'grid items-center py-[13px] pr-[14px] border-b border-border last:border-b-0 text-[14px]',
         cols,
         isUser
           ? 'bg-primary/10 border-l-[3px] border-l-primary pl-[11px]'
@@ -804,10 +806,11 @@ function StandingRowView({
       </span>
       <span
         className={cn(
-          'inline-flex items-center gap-[6px] min-w-0 font-medium',
+          'inline-flex items-center gap-[8px] min-w-0 font-medium',
           isUser && 'text-foreground font-bold',
         )}
       >
+        <Avatar profile={row.profile} size="md" />
         {row.position === 1 && (
           <Star className="size-[11px] fill-primary text-primary shrink-0" />
         )}

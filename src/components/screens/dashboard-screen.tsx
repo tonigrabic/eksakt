@@ -24,7 +24,7 @@ import { HelpDialog } from '@/components/help-dialog'
 import { useDashboard } from '@/hooks/use-dashboard'
 import { useMyLeagues } from '@/hooks/use-my-leagues'
 import { useLiveMinute } from '@/hooks/use-live-minute'
-import { Crest, teamName } from '@/components/match-ui'
+import { Avatar, Crest, teamName } from '@/components/match-ui'
 import { InviteFriendsModal } from '@/components/modals/invite-friends-modal'
 import type {
   LeagueDashboardSummary,
@@ -460,7 +460,7 @@ function DashStandingsRow({ row }: { row: StandingRow }) {
   return (
     <div
       className={cn(
-        'flex items-center gap-2.5 py-[9px] pr-3.5 text-[14px] border-b border-border last:border-b-0',
+        'flex items-center gap-2.5 py-[11px] pr-3.5 text-[14px] border-b border-border last:border-b-0',
         isUser
           ? 'bg-primary/10 border-l-[3px] border-l-primary pl-[11px]'
           : 'pl-3.5',
@@ -482,10 +482,11 @@ function DashStandingsRow({ row }: { row: StandingRow }) {
       </span>
       <span
         className={cn(
-          'flex-1 inline-flex items-center gap-1.5 min-w-0',
+          'flex-1 inline-flex items-center gap-2 min-w-0',
           isUser ? 'text-foreground font-bold' : 'font-medium',
         )}
       >
+        <Avatar profile={row.profile} size="md" />
         {row.position === 1 && (
           <Star className="size-[13px] fill-primary text-primary shrink-0" />
         )}

@@ -23,6 +23,7 @@ import { useMatch } from '@/hooks/use-match'
 import { useRealtimeMatch } from '@/hooks/use-realtime-match'
 import { useLiveMinute } from '@/hooks/use-live-minute'
 import { AnimatedScore } from '@/components/animated-score'
+import { Avatar } from '@/components/match-ui'
 import { pointsTier } from '@/lib/format'
 import type {
   BestScoreSuggestion,
@@ -282,7 +283,8 @@ function PredictionRow({ prediction }: { prediction: PredictionWithDetails }) {
       )}
     >
       <div className="flex items-center px-3 py-2.5 text-sm">
-        <div className="flex-1 flex items-center gap-1.5 min-w-0">
+        <div className="flex-1 flex items-center gap-2 min-w-0">
+          <Avatar profile={prediction.profile} size="sm" />
           <span
             className={cn(
               'font-medium truncate',
@@ -460,7 +462,8 @@ function StandingCardRow({ row }: { row: StandingRow }) {
         >
           {row.position}
         </span>
-        <div className="flex-1 pl-2 flex items-center gap-1.5 min-w-0">
+        <div className="flex-1 pl-2 flex items-center gap-2 min-w-0">
+          <Avatar profile={row.profile} size="md" />
           {row.position === 1 && (
             <Trophy className="h-3.5 w-3.5 text-primary flex-shrink-0" />
           )}
