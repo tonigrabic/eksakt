@@ -73,18 +73,24 @@ serve(async (req: Request) => {
 
     for (const m of apiMatches) {
       const apiStatus = mapStatus(m.status);
-      // Predictions are scored on the 90' (regulation) result, never
-      // post-ET. For matches that went to ET/penalties, `regularTime`
-      // holds the locked 90' score; for everything else, `fullTime` IS
-      // the 90' result.
+      // 90 minutes is end-of-game for Eksakt: predictions are scored on
+      // the regulation result, never post-ET. So the moment the API
+      // says the match left REGULAR duration (i.e. extra time started
+      // or penalties), we treat the match as finished from this app's
+      // perspective — even if the API still calls it IN_PLAY. The
+      // existing points-trigger then fires off the 90' score.
       const inOvertime = m.score.duration !== "REGULAR";
+      const effectiveStatus = inOvertime ? "finished" : apiStatus;
+      // `regularTime` holds the locked 90' score on ET matches;
+      // `fullTime` IS the 90' result for matches decided in regulation.
       const reg = m.score.regularTime;
       const apiHome = reg?.home ?? m.score.fullTime.home;
       const apiAway = reg?.away ?? m.score.fullTime.away;
-      // Defensive: if we're in ET and the API isn't exposing
-      // `regularTime` (free tier sometimes hides it), DO NOT overwrite
-      // the stored score with `fullTime` — it now includes ET goals.
-      // Preserve whatever 90' score we already captured.
+      // If we're in ET and the API isn't exposing `regularTime` (free
+      // tier sometimes hides it), DO NOT overwrite the stored score
+      // with `fullTime` — it now includes ET goals. The status flip to
+      // finished still goes through; the score stays whatever we
+      // captured in the last regulation tick.
       const canUpdateScore = !inOvertime || reg != null;
       const apiMinute = formatLiveMinute(m);
 
@@ -104,8 +110,11 @@ serve(async (req: Request) => {
       // If the API says the match is in an "earlier" state than what we
       // already have, ignore the entire row — including scores. The score
       // in a regression payload is unreliable (often null or 0-0).
+      // Compare against `effectiveStatus` so an ET tick (we treat as
+      // finished) isn't itself flagged as a regression of our prior
+      // live state.
       const isRegression =
-        STATUS_RANK[apiStatus] < STATUS_RANK[existing.status];
+        STATUS_RANK[effectiveStatus] < STATUS_RANK[existing.status];
       if (isRegression) {
         regressionsSkipped++;
         continue;
@@ -114,7 +123,7 @@ serve(async (req: Request) => {
       // Build the patch defensively: never write nulls back over real data
       // (free tier sometimes returns null scores even on IN_PLAY).
       const patch: Record<string, unknown> = {};
-      if (apiStatus !== existing.status) patch.status = apiStatus;
+      if (effectiveStatus !== existing.status) patch.status = effectiveStatus;
       if (
         canUpdateScore &&
         apiHome !== null &&
@@ -129,7 +138,13 @@ serve(async (req: Request) => {
       ) {
         patch.away_score = apiAway;
       }
-      if (apiMinute !== existing.live_minute) patch.live_minute = apiMinute;
+      // Drop the live minute on the early-finish flip — a "finished"
+      // match showing 95' would be confusing.
+      const effectiveMinute =
+        effectiveStatus === "finished" ? null : apiMinute;
+      if (effectiveMinute !== existing.live_minute) {
+        patch.live_minute = effectiveMinute;
+      }
 
       if (Object.keys(patch).length === 0) {
         unchanged++;
