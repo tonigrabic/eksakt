@@ -1,10 +1,13 @@
 'use client'
 
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Card } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import {
   Trophy,
   Clock,
+  ChevronDown,
   ChevronRight,
   Zap,
   Plus,
@@ -18,17 +21,33 @@ import { ScreenHeader } from '@/components/screen-header'
 import { CreateOrJoinLeague } from '@/components/create-or-join-league'
 import { HelpDialog } from '@/components/help-dialog'
 import { useDashboard } from '@/hooks/use-dashboard'
+import { useMyLeagues } from '@/hooks/use-my-leagues'
 import { useLiveMinute } from '@/hooks/use-live-minute'
 import { Crest, teamName } from '@/components/match-ui'
 import type {
   LeagueDashboardSummary,
   LiveMatchSummary,
+  MyLeagueCard,
   StandingRow,
 } from '@/types'
 
 export function DashboardScreen() {
   const { openPrediction } = usePrediction()
-  const { data, isLoading } = useDashboard()
+  const { data: active, isLoading: activeLoading } = useDashboard()
+  const { data: my, isLoading: myLoading } = useMyLeagues()
+
+  // Sort active so live leagues come first.
+  const activeSorted = useMemo(
+    () =>
+      [...(active ?? [])].sort(
+        (a, b) =>
+          Number(b.liveMatches.length > 0) - Number(a.liveMatches.length > 0),
+      ),
+    [active],
+  )
+  const completed = my?.completed ?? []
+  const isLoading = activeLoading || myLoading
+  const hasAnyLeague = activeSorted.length > 0 || completed.length > 0
 
   return (
     <>
@@ -39,23 +58,110 @@ export function DashboardScreen() {
       />
 
       <div className="max-w-2xl mx-auto px-4 py-4 space-y-4">
-        {isLoading || !data ? (
+        {isLoading && !active ? (
           <p className="text-center text-sm text-muted-foreground py-12">
             {'Loading…'}
           </p>
-        ) : data.length === 0 ? (
+        ) : !hasAnyLeague ? (
           <WelcomeEmptyState />
         ) : (
-          data.map((summary) => (
-            <DashboardLeagueCard
-              key={summary.league.id}
-              summary={summary}
-              onPredict={openPrediction}
-            />
-          ))
+          <>
+            <CreateOrJoinLeague />
+            {activeSorted.map((summary) => (
+              <DashboardLeagueCard
+                key={summary.league.id}
+                summary={summary}
+                onPredict={openPrediction}
+              />
+            ))}
+            {completed.length > 0 && (
+              <CompletedLeaguesSection completed={completed} />
+            )}
+          </>
         )}
       </div>
     </>
+  )
+}
+
+function CompletedLeaguesSection({ completed }: { completed: MyLeagueCard[] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="pt-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between text-[11px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground hover:text-foreground transition-colors py-2 px-1"
+      >
+        <span>
+          {'Completed leagues '}
+          <span className="text-dim">({completed.length})</span>
+        </span>
+        <ChevronDown
+          className={cn(
+            'size-4 transition-transform',
+            open && 'rotate-180',
+          )}
+        />
+      </button>
+      {open && (
+        <div className="space-y-2 mt-1">
+          {completed.map((card) => (
+            <CompletedLeagueRow key={card.league.id} card={card} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CompletedLeagueRow({ card }: { card: MyLeagueCard }) {
+  const { league, userPosition, userPoints, finalBadge } = card
+  return (
+    <Link
+      href={`/leagues/${league.id}`}
+      className="block rounded-[12px] border border-border bg-card opacity-80 hover:opacity-100 hover:border-hair-strong transition-all"
+    >
+      <div className="flex items-center gap-3 p-3.5">
+        <div className="size-10 rounded-[10px] grid place-items-center bg-secondary text-lg shrink-0 grayscale">
+          {league.icon ?? (
+            <Trophy className="size-5 text-muted-foreground" />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className="font-display text-[18px] font-extrabold uppercase leading-none tracking-[0.005em] text-foreground truncate">
+            {league.name}
+          </h3>
+          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span>
+              {'Final '}
+              <span className="font-mono font-semibold text-foreground">
+                {'#'}
+                {userPosition}
+              </span>
+            </span>
+            <span className="text-dim">{'·'}</span>
+            <span className="font-mono font-semibold text-foreground">
+              {userPoints} {'pts'}
+            </span>
+            <span className="text-dim">{'·'}</span>
+            <span>
+              {league.memberCount} {'players'}
+            </span>
+          </div>
+        </div>
+        {finalBadge && (
+          <Badge
+            variant="outline"
+            className="gap-1 border-primary/50 text-primary shrink-0"
+          >
+            <Trophy className="size-3" />
+            {finalBadge}
+          </Badge>
+        )}
+        <ChevronRight className="size-4 text-muted-foreground shrink-0" />
+      </div>
+    </Link>
   )
 }
 

@@ -2,12 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Trophy, User } from 'lucide-react'
+import { Home, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
+// Two-tab nav: Home rolls up active + completed leagues; Profile keeps
+// account + career stats. A third slot is intentionally reserved for
+// the next anchor surface (notifications, friends, etc.).
 const tabs = [
   { href: '/dashboard', label: 'Home', icon: Home },
-  { href: '/leagues', label: 'Leagues', icon: Trophy },
   { href: '/profile', label: 'Profile', icon: User },
 ] as const
 

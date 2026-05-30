@@ -20,6 +20,7 @@ import {
   useUploadAvatar,
 } from '@/hooks/use-update-profile'
 import { useSignOut } from '@/hooks/use-sign-out'
+import { useMyLeagues } from '@/hooks/use-my-leagues'
 import { ScreenHeader } from '@/components/screen-header'
 
 const MAX_NAME_LENGTH = 40
@@ -208,6 +209,8 @@ export function ProfileScreen() {
           )}
         </Card>
 
+        <ProfileStatsCard />
+
         <Card className="bg-card border-border p-4">
           <Button
             variant="ghost"
@@ -226,4 +229,37 @@ export function ProfileScreen() {
 
 function ProfileHeader() {
   return <ScreenHeader title="Profile" subtitle="Account and preferences" />
+}
+
+// Compact "career" stats — total leagues, currently active, and number
+// of top-3 finishes. Lives on Profile rather than the home so it doesn't
+// compete with the live-match cards for top-of-fold.
+function ProfileStatsCard() {
+  const { data } = useMyLeagues()
+  if (!data) return null
+  return (
+    <Card className="bg-card border-border p-4">
+      <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground mb-3">
+        {'Your stats'}
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <StatCell label="Leagues" value={data.stats.totalLeagues} />
+        <StatCell label="Active" value={data.stats.activeLeagues} />
+        <StatCell label="Top 3 finishes" value={data.stats.topThreeFinishes} />
+      </div>
+    </Card>
+  )
+}
+
+function StatCell({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <div className="font-display text-[28px] font-extrabold leading-none tracking-[-0.02em] text-foreground tabular-nums">
+        {value}
+      </div>
+      <div className="mt-1.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground font-semibold">
+        {label}
+      </div>
+    </div>
+  )
 }

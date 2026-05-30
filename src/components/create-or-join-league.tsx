@@ -30,7 +30,7 @@ export function CreateOrJoinLeague() {
       <Button size="lg" asChild>
         <Link href="/leagues/create">
           <Plus className="h-4 w-4 mr-1.5" />
-          {'Create'}
+          {'Create League'}
         </Link>
       </Button>
       <JoinLeagueButton />
@@ -109,7 +109,7 @@ function JoinLeagueButton() {
               <span>{error}</span>
             </div>
           )}
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2">
             <Button
               type="button"
               variant="ghost"

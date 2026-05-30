@@ -133,7 +133,12 @@ export function PredictionModal({
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="max-h-[92vh] bg-card border-border">
+      {/* Center-anchor the sheet so it matches the app's max-w-2xl on
+          desktop instead of stretching edge-to-edge. The "!" overrides
+          the drawer primitive's data-attribute `inset-x-0` (same width
+          as the rest of the app; mobile is unchanged since w-full caps
+          below max-w-2xl). */}
+      <DrawerContent className="max-h-[92vh] bg-card border-border w-full max-w-2xl !left-1/2 !right-auto !-translate-x-1/2">
         <DrawerHeader className="pb-2">
           <DrawerTitle className="text-lg font-bold text-foreground">
             {'Make Your Prediction'}
