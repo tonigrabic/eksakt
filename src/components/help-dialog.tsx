@@ -104,7 +104,6 @@ export function HelpDialog({
           <Row label="Correct outcome (W / D / L)" value="1 pt" />
           <Row label="Exact score" value="+3 pts" />
           <Row label="Lone or rare outcome (<5%)" value="+3 pts" />
-          <Row label="Rare exact score (<5% picked it)" value="+3 pts" />
           <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground pt-1">
             <Zap className="h-3 w-3 text-primary" />
             <span>{"Boosters (×2 / ×3 / ×5) multiply the match total."}</span>

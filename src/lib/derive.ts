@@ -9,7 +9,6 @@ import type {
   BestScoreSuggestion,
   BoosterCounts,
   CompletedMatchSummary,
-  League,
   LeagueMember,
   LiveMatchSummary,
   Match,
@@ -327,19 +326,17 @@ function explainPoints(pts: PointsBreakdown): string {
 // ── League utilities ────────────────────────────────────────────────────────
 
 /**
- * A multi-comp league is finished only when every linked competition has
- * ended. While any one is still going, the league is active.
+ * A league is finished only when it has matches AND none are still
+ * scheduled or live. Match status is the authoritative signal — the
+ * football-data sync's `season_end` metadata can sit *before* the actual
+ * final (e.g. UEFA's seasonEnd may end May, while the Champions League
+ * final is in June). Trusting seasonEnd makes the league disappear from
+ * the dashboard and blocks predictions on the still-unplayed final.
  *
- * Empty `competitions` (shouldn't happen — leagues require ≥1 link at
- * creation) defensively returns false: better to keep an orphan league
- * visible than to silently hide it.
+ * Empty `matches` (no fixtures synced yet) defensively returns false:
+ * better to keep an orphan league visible than to silently hide it.
  */
-export function isLeagueFinished(
-  league: Pick<League, 'competitions'>,
-): boolean {
-  if (league.competitions.length === 0) return false
-  const now = Date.now()
-  return league.competitions.every(
-    (lc) => new Date(lc.competition.seasonEnd).getTime() < now,
-  )
+export function isLeagueFinished(matches: Match[]): boolean {
+  if (matches.length === 0) return false
+  return matches.every((m) => m.status === 'finished')
 }

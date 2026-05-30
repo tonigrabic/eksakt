@@ -5,7 +5,6 @@ import type {
   BestScoreSuggestion,
   BoosterCounts,
   CompletedMatchSummary,
-  League,
   LeagueDashboardSummary,
   LeagueDetailPayload,
   LeagueMember,
@@ -258,7 +257,7 @@ export function buildDashboard(userId: UUID = CURRENT_USER_ID): LeagueDashboardS
   const summaries: LeagueDashboardSummary[] = []
   for (const leagueId of userLeagueIds) {
     const league = leagues[leagueId]
-    const isCompleted = isCompetitionFinished(league)
+    const isCompleted = isCompetitionFinished(leagueId)
     if (isCompleted) continue // dashboard only shows active competitions
 
     const standings = computeStandings(leagueId)
@@ -309,7 +308,7 @@ export function buildMyLeagues(userId: UUID = CURRENT_USER_ID): MyLeaguesPayload
     const userPoints =
       (userRow?.totalPoints ?? 0) + (userRow?.matchdayPoints ?? 0)
     const userPosition = userRow?.position ?? standings.length + 1
-    const isCompleted = isCompetitionFinished(league)
+    const isCompleted = isCompetitionFinished(leagueId)
     const next = matchesForLeague(leagueId).upcoming[0] ?? null
 
     let finalBadge: MyLeagueCard['finalBadge'] = null
@@ -424,7 +423,7 @@ export function buildPredictionContext(
     ) {
       continue
     }
-    if (isCompetitionFinished(league)) continue
+    if (isCompetitionFinished(leagueId)) continue
 
     const standings = computeStandings(leagueId)
     const userRow = standings.find((r) => r.profile.id === userId)
@@ -519,11 +518,16 @@ function explainPoints(pts: PointsBreakdown): string {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function isCompetitionFinished(league: League): boolean {
-  if (league.competitions.length === 0) return false
-  const now = Date.now()
-  return league.competitions.every(
-    (lc) => new Date(lc.competition.seasonEnd).getTime() < now,
+// A league is finished only when its matches are all played — match
+// status is the truth, season_end metadata can sit before the actual
+// final (e.g. UEFA cup finals after season end). Empty fixtures (new
+// league) defensively counts as active.
+function isCompetitionFinished(leagueId: UUID): boolean {
+  const buckets = matchesForLeague(leagueId)
+  return (
+    buckets.live.length === 0 &&
+    buckets.upcoming.length === 0 &&
+    buckets.completed.length > 0
   )
 }
 

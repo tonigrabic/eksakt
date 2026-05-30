@@ -936,11 +936,14 @@ function UpcomingCard({
   )
   const urgent = !locked && minsToKickoff > 0 && minsToKickoff < URGENT_KICKOFF_MIN
 
+  // Left rail signals booster type (x2 green / x3 sky / x5 amber). A
+  // predicted-without-booster card gets a muted neutral rail so it still
+  // reads as "locked in" without colliding with the x5 amber.
   const rail = !locked
     ? 'bg-transparent'
     : booster
       ? BOOSTER_RAIL[booster]
-      : 'bg-primary'
+      : 'bg-dim'
 
   return (
     <button

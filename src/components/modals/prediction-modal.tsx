@@ -466,7 +466,14 @@ function PerLeagueCard({
         {league.boostersEnabled && (
           <div className="flex gap-2 pt-0.5">
             {BOOSTER_TYPES.map((b) => {
-              const remaining = league.boostersRemaining[b]
+              // The booster currently saved on THIS match is always
+              // reclaimable: the server counts it as "used" (it's stored
+              // on the prediction), so we add it back to the pool while
+              // editing. Otherwise users couldn't switch off then back to
+              // their own booster when remaining is 0.
+              const remaining =
+                league.boostersRemaining[b] +
+                (league.currentPrediction?.booster === b ? 1 : 0)
               const isActive = draft.booster === b
               const styles = boosterStyles[b]
               const exhausted = remaining === 0 && !isActive

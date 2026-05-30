@@ -203,11 +203,9 @@ export async function getDashboard(): Promise<LeagueDashboardSummary[]> {
   for (const row of memberRows ?? []) {
     const leagueRow = row.league as unknown as Parameters<typeof rowToLeague>[0]
     if (!leagueRow) continue
-    // Map first so we can apply the multi-comp "all linked comps over"
-    // semantic via the shared helper. Member count is irrelevant here.
-    const lite = rowToLeague(leagueRow, 0)
-    if (isLeagueFinished(lite)) continue
-
+    // "Finished" used to be a cheap pre-check off season_end metadata,
+    // but that's unreliable (cup finals after season_end). The real
+    // signal lives in the matches list — fetch and check there.
     const summary = await buildLeagueDashboardSummary(leagueRow.id, userId)
     if (summary) summaries.push(summary)
   }
@@ -220,6 +218,8 @@ async function buildLeagueDashboardSummary(
 ): Promise<LeagueDashboardSummary | null> {
   const { league, members } = await fetchLeagueWithCounts(leagueId)
   const matches = await fetchMatchesForLeague(leagueId)
+  // Skip leagues whose matches are all finished — nothing to dashboard.
+  if (isLeagueFinished(matches)) return null
   const predictions = await fetchPredictionsForLeague(leagueId)
 
   const standings = computeStandings({
@@ -323,7 +323,7 @@ export async function getMyLeagues(): Promise<MyLeaguesPayload> {
         .filter(isUpcomingPredictable)
         .sort((a, b) => a.kickoffTime.localeCompare(b.kickoffTime))[0] ?? null
 
-    const completed = isLeagueFinished(league)
+    const completed = isLeagueFinished(matches)
     let finalBadge: MyLeagueCard['finalBadge'] = null
     if (completed) {
       if (userPosition === 1) finalBadge = '1st'
@@ -595,10 +595,13 @@ export async function getPredictionContext(
           new Date(lc.startDate).getTime(),
     )
     if (!matchInLeague) continue
-    if (isLeagueFinished(lite)) continue
 
     const { league, members } = await fetchLeagueWithCounts(leagueRow.id)
     const matches = await fetchMatchesForLeague(leagueRow.id)
+    // Only skip if the league has truly no remaining work — but the very
+    // match the user is editing on is in the league, so this almost
+    // always lets the context through (the cup-final case included).
+    if (isLeagueFinished(matches)) continue
     const predictions = await fetchPredictionsForLeague(leagueRow.id)
 
     const standings = computeStandings({
