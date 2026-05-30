@@ -3,13 +3,22 @@
 import { Fragment, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, ChevronDown, Settings, Star, Zap } from 'lucide-react'
+import {
+  ArrowLeft,
+  ChevronDown,
+  Settings,
+  Share2,
+  Star,
+  UserPlus,
+  Zap,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePrediction } from '@/components/prediction-provider'
 import { useLeagueDetail } from '@/hooks/use-league-detail'
 import { useRealtimeMatch } from '@/hooks/use-realtime-match'
 import { useLiveMinute } from '@/hooks/use-live-minute'
 import { AnimatedScore } from '@/components/animated-score'
+import { InviteFriendsModal } from '@/components/modals/invite-friends-modal'
 import {
   BOOSTER_PILL,
   BOOSTER_RAIL,
@@ -78,6 +87,7 @@ export function LeagueDetailScreen({ leagueId }: Props) {
   // Accordion for live cards: which match's picks are expanded. Only one
   // open at a time when several matches are live.
   const [openLiveId, setOpenLiveId] = useState<UUID | null>(null)
+  const [inviteOpen, setInviteOpen] = useState(false)
 
   if (isLoading || !data) {
     return (
@@ -130,6 +140,14 @@ export function LeagueDetailScreen({ leagueId }: Props) {
               {'No live'}
             </span>
           )}
+          <button
+            type="button"
+            onClick={() => setInviteOpen(true)}
+            aria-label="Invite friends"
+            className="grid place-items-center size-[30px] rounded-[8px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0"
+          >
+            <UserPlus className="size-4" />
+          </button>
           {isAdmin && (
             <Link
               href={`/leagues/${leagueId}/settings`}
@@ -189,6 +207,14 @@ export function LeagueDetailScreen({ leagueId }: Props) {
       )}
 
       <div className="max-w-2xl mx-auto px-4">
+        {/* ── Solo invite CTA — only when the user is alone in the league ── */}
+        {standings.length === 1 && (
+          <SoloInviteCard
+            inviteCode={league.inviteCode}
+            onShare={() => setInviteOpen(true)}
+          />
+        )}
+
         {/* ── Live scoreboard(s) ──────────────────────────────────────── */}
         {hasLive && (
           <section className="pt-[22px]">
@@ -252,6 +278,49 @@ export function LeagueDetailScreen({ leagueId }: Props) {
           </div>
         </div>
       </div>
+
+      <InviteFriendsModal
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+        leagueName={league.name}
+        inviteCode={league.inviteCode}
+      />
+    </div>
+  )
+}
+
+// ── Solo invite CTA (inline, under the hero) ─────────────────────────────────
+function SoloInviteCard({
+  inviteCode,
+  onShare,
+}: {
+  inviteCode: string
+  onShare: () => void
+}) {
+  return (
+    <div className="mt-[22px] rounded-[14px] border border-primary/30 bg-primary/[0.06] p-5">
+      <div className="flex items-start gap-3">
+        <div className="text-2xl leading-none mt-0.5">{'👋'}</div>
+        <div className="flex-1 min-w-0">
+          <h3 className="font-display text-[18px] font-extrabold uppercase leading-none tracking-[0.005em] text-foreground">
+            {'You’re flying solo'}
+          </h3>
+          <p className="mt-1.5 text-[12px] text-muted-foreground leading-relaxed">
+            {'Invite friends to make it a competition. They can join with this code:'}
+          </p>
+          <div className="mt-3 inline-flex items-center gap-2 rounded-[8px] border border-border bg-card px-3 py-1.5 font-mono text-[14px] font-extrabold tracking-[0.2em] text-foreground">
+            {inviteCode}
+          </div>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onShare}
+        className="mt-4 w-full bg-primary text-primary-foreground rounded-[8px] py-3 font-display text-[14px] font-black uppercase tracking-[0.08em] inline-flex items-center justify-center gap-2 hover:opacity-95 transition-opacity"
+      >
+        <Share2 className="size-4" />
+        {'Share invite'}
+      </button>
     </div>
   )
 }

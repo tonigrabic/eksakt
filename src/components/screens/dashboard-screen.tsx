@@ -12,6 +12,7 @@ import {
   Zap,
   Plus,
   Hash,
+  Share2,
   Target,
   Star,
 } from 'lucide-react'
@@ -24,6 +25,7 @@ import { useDashboard } from '@/hooks/use-dashboard'
 import { useMyLeagues } from '@/hooks/use-my-leagues'
 import { useLiveMinute } from '@/hooks/use-live-minute'
 import { Crest, teamName } from '@/components/match-ui'
+import { InviteFriendsModal } from '@/components/modals/invite-friends-modal'
 import type {
   LeagueDashboardSummary,
   LiveMatchSummary,
@@ -178,6 +180,10 @@ function DashboardLeagueCard({
   const hasLive = liveMatches.length > 0
   const firstUnpredicted = upcomingMatches.find((u) => u.userPrediction === null)
   const leagueHref = `/leagues/${league.id}`
+  // Solo state: the only person in the league. Swap the standings slot
+  // (which would just render a one-row "table") for an invite CTA.
+  const isSolo = league.memberCount <= 1
+  const [inviteOpen, setInviteOpen] = useState(false)
 
   return (
     <div className="rounded-[14px] border border-border bg-card overflow-hidden">
@@ -249,8 +255,9 @@ function DashboardLeagueCard({
           </div>
         )}
 
-        {/* (live) standings preview — shown alongside live games too */}
-        {summary.standingsPreview.length > 0 && (
+        {/* (live) standings preview — hidden when solo so we can render
+            the invite CTA below instead of a one-row table. */}
+        {!isSolo && summary.standingsPreview.length > 0 && (
           <div className="px-3.5 pt-2 pb-3.5">
             <DashSectionLabel>
               {hasLive ? 'Live standings' : 'Standings'}
@@ -261,6 +268,15 @@ function DashboardLeagueCard({
           </div>
         )}
       </Link>
+
+      {/* solo invite block — outside the Link so the Share button doesn't
+          nest inside an anchor. Only when there's no live game running. */}
+      {isSolo && !hasLive && (
+        <SoloInviteBlock
+          inviteCode={league.inviteCode}
+          onShare={() => setInviteOpen(true)}
+        />
+      )}
 
       {/* footer (outside the link so the predict button doesn't nest) */}
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-border">
@@ -289,6 +305,50 @@ function DashboardLeagueCard({
           {'Open league'}
           <ChevronRight className="size-4" />
         </Link>
+      </div>
+
+      <InviteFriendsModal
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+        leagueName={league.name}
+        inviteCode={league.inviteCode}
+      />
+    </div>
+  )
+}
+
+// ── Solo invite block (dashboard card, swaps the standings slot) ─────────────
+
+function SoloInviteBlock({
+  inviteCode,
+  onShare,
+}: {
+  inviteCode: string
+  onShare: () => void
+}) {
+  return (
+    <div className="px-3.5 pt-2 pb-3.5">
+      <DashSectionLabel>{'Invite friends'}</DashSectionLabel>
+      <div className="rounded-[10px] border border-primary/30 bg-primary/[0.06] p-3.5">
+        <div className="flex items-center gap-3">
+          <div className="text-xl leading-none">{'👋'}</div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[12px] text-muted-foreground leading-snug">
+              {'No one else here yet. Share the code to make it a competition.'}
+            </p>
+            <div className="mt-2 inline-flex items-center rounded-[7px] border border-border bg-card px-2.5 py-1 font-mono text-[13px] font-extrabold tracking-[0.18em] text-foreground">
+              {inviteCode}
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onShare}
+          className="mt-3 w-full bg-primary text-primary-foreground rounded-[8px] py-2.5 font-display text-[13px] font-black uppercase tracking-[0.08em] inline-flex items-center justify-center gap-2 hover:opacity-95 transition-opacity"
+        >
+          <Share2 className="size-4" />
+          {'Share invite'}
+        </button>
       </div>
     </div>
   )
