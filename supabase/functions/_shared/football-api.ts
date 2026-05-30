@@ -46,9 +46,20 @@ export type FootballApiMatch = {
   awayTeam: FootballApiTeam | { id: null; name: string | null }
   score: {
     winner: 'HOME_TEAM' | 'AWAY_TEAM' | 'DRAW' | null
+    // 'REGULAR' = decided in 90'. 'EXTRA_TIME' / 'PENALTY_SHOOTOUT' = went
+    // beyond. Critical for scoring: predictions in this app are always
+    // judged on the 90' (regulation) score, never the post-ET result.
     duration: 'REGULAR' | 'EXTRA_TIME' | 'PENALTY_SHOOTOUT'
+    // The "final" score the API returns. For matches in ET this CAN
+    // include ET goals — prefer `regularTime` for the canonical 90'.
     fullTime: { home: number | null; away: number | null }
     halfTime: { home: number | null; away: number | null }
+    // 90' (end-of-regulation) score. Present on matches that went to ET
+    // or penalties. Absent on matches decided in 90' — in which case
+    // `fullTime` IS the 90' result.
+    regularTime?: { home: number | null; away: number | null }
+    // Only set for matches decided by penalty shootout.
+    penalties?: { home: number | null; away: number | null }
   }
   competition: {
     id: number

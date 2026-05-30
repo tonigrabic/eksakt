@@ -124,6 +124,12 @@ serve(async (req: Request) => {
       const awayTeamId =
         m.awayTeam.id != null ? teamIdByExternal.get(m.awayTeam.id) ?? null : null
 
+      // Predictions in this app are always judged on the 90' (regulation)
+      // result. Prefer `regularTime` (locked 90' for ET matches); fall
+      // back to `fullTime` which IS the 90' value for matches decided in
+      // regulation.
+      const regHome = m.score.regularTime?.home ?? m.score.fullTime.home
+      const regAway = m.score.regularTime?.away ?? m.score.fullTime.away
       const { error: matchErr } = await supabase
         .from('matches')
         .upsert(
@@ -134,8 +140,8 @@ serve(async (req: Request) => {
             away_team_id: awayTeamId,
             kickoff_time: m.utcDate,
             status: mapStatus(m.status),
-            home_score: m.score.fullTime.home,
-            away_score: m.score.fullTime.away,
+            home_score: regHome,
+            away_score: regAway,
             matchday: m.matchday,
             live_minute: formatLiveMinute(m),
             api_external_id: m.id,

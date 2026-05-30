@@ -73,8 +73,19 @@ serve(async (req: Request) => {
 
     for (const m of apiMatches) {
       const apiStatus = mapStatus(m.status);
-      const apiHome = m.score.fullTime.home;
-      const apiAway = m.score.fullTime.away;
+      // Predictions are scored on the 90' (regulation) result, never
+      // post-ET. For matches that went to ET/penalties, `regularTime`
+      // holds the locked 90' score; for everything else, `fullTime` IS
+      // the 90' result.
+      const inOvertime = m.score.duration !== "REGULAR";
+      const reg = m.score.regularTime;
+      const apiHome = reg?.home ?? m.score.fullTime.home;
+      const apiAway = reg?.away ?? m.score.fullTime.away;
+      // Defensive: if we're in ET and the API isn't exposing
+      // `regularTime` (free tier sometimes hides it), DO NOT overwrite
+      // the stored score with `fullTime` — it now includes ET goals.
+      // Preserve whatever 90' score we already captured.
+      const canUpdateScore = !inOvertime || reg != null;
       const apiMinute = formatLiveMinute(m);
 
       // Read existing row so we can no-op when nothing changed (saves
@@ -104,10 +115,18 @@ serve(async (req: Request) => {
       // (free tier sometimes returns null scores even on IN_PLAY).
       const patch: Record<string, unknown> = {};
       if (apiStatus !== existing.status) patch.status = apiStatus;
-      if (apiHome !== null && apiHome !== existing.home_score) {
+      if (
+        canUpdateScore &&
+        apiHome !== null &&
+        apiHome !== existing.home_score
+      ) {
         patch.home_score = apiHome;
       }
-      if (apiAway !== null && apiAway !== existing.away_score) {
+      if (
+        canUpdateScore &&
+        apiAway !== null &&
+        apiAway !== existing.away_score
+      ) {
         patch.away_score = apiAway;
       }
       if (apiMinute !== existing.live_minute) patch.live_minute = apiMinute;
