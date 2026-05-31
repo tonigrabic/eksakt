@@ -282,21 +282,11 @@ export type RemoveLeagueMemberInput = {
 
 // ── Match deep view (live or finished) ───────────────────────────────────────
 
-// "Best for You" suggestion — top 3 hypothetical scores ranked by points-if-it-ended-now.
-export type BestScoreSuggestion = {
-  homeScore: number
-  awayScore: number
-  isCurrentScore: boolean
-  hypotheticalPoints: PointsBreakdown
-  reasoning: string // human-readable
-}
-
 export type MatchDetailPayload = {
   match: Match
   league: Pick<League, 'id' | 'name'>
   predictions: PredictionWithDetails[] // empty array pre-kickoff
   userPrediction: PredictionWithDetails | null
-  bestScoresForUser: BestScoreSuggestion[] // empty if user has no prediction
   standings: StandingRow[] // live standings reflecting current scores
 }
 

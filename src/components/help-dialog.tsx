@@ -17,7 +17,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Clock, HelpCircle, Plus, Share2, Zap, Target, Trophy } from "lucide-react";
+import { Clock, HelpCircle, Mail, Plus, Share2, Zap, Target, Trophy } from "lucide-react";
 
 interface HelpDialogProps {
   open?: boolean;
@@ -126,6 +126,17 @@ export function HelpDialog({
           {"Tip: tap the "}
           <Share2 className="inline h-3 w-3" />
           {" Invite icon at the top of any league to share an invite code."}
+        </p>
+
+        <p className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
+          <Mail className="inline h-3 w-3" />
+          {"Questions or feedback? "}
+          <a
+            href="mailto:toni.grabic@gmail.com"
+            className="text-primary hover:underline"
+          >
+            {"toni.grabic@gmail.com"}
+          </a>
         </p>
       </DialogContent>
     </Dialog>

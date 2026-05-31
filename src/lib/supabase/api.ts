@@ -16,7 +16,6 @@ import {
   rowToProfile,
 } from './mappers'
 import {
-  buildBestScores,
   completedMatchSummary,
   computeStandings,
   isLeagueFinished,
@@ -505,14 +504,15 @@ export async function getMatchDetail(
     ),
   })
 
-  const userPredRaw = predictions.find((p) => p.userId === userId) ?? null
   const isLocked = match.status !== 'scheduled'
   const memberCount = members.length
 
-  // Per-prediction points: prefer the persisted `storedPoints` (server-
-  // authoritative for finished matches). Fall back to live recompute
-  // for in-progress matches and the brief race window after a status
-  // flip but before the trigger fires.
+  // For finished matches, the persisted `storedPoints` row is server-
+  // authoritative (canonical rarity, audit fields). For live matches we
+  // must always recompute — stale `points` rows can linger if a match
+  // was previously finished and then re-opened (manual sync, upstream
+  // correction), and trusting them would show points against a previous
+  // final score instead of the current live one.
   const detailedWithPoints = predictions.map((p) => ({
     ...p,
     profile:
@@ -521,17 +521,18 @@ export async function getMatchDetail(
     points:
       !isLocked || match.homeScore == null || match.awayScore == null
         ? null
-        : (p.storedPoints ??
-          computePoints({
-            prediction: {
-              homeScore: p.homeScore,
-              awayScore: p.awayScore,
-              booster: p.booster,
-            },
-            finalScore: { home: match.homeScore, away: match.awayScore },
-            rarity: computeRarity(p, predictions, memberCount),
-            final: match.status === 'finished',
-          })),
+        : match.status === 'finished' && p.storedPoints
+          ? p.storedPoints
+          : computePoints({
+              prediction: {
+                homeScore: p.homeScore,
+                awayScore: p.awayScore,
+                booster: p.booster,
+              },
+              finalScore: { home: match.homeScore, away: match.awayScore },
+              rarity: computeRarity(p, predictions, memberCount),
+              final: match.status === 'finished',
+            }),
   }))
 
   const userPredDetailed =
@@ -542,15 +543,6 @@ export async function getMatchDetail(
     league: { id: league.id, name: league.name },
     predictions: detailedWithPoints,
     userPrediction: userPredDetailed,
-    bestScoresForUser:
-      isLocked && userPredRaw
-        ? buildBestScores({
-            match,
-            peers: predictions,
-            userPrediction: userPredRaw,
-            memberCount,
-          })
-        : [],
     standings,
   }
 }

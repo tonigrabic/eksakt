@@ -2,7 +2,6 @@
 // will compute. No I/O — keeps it testable and identical to BE intent.
 
 import type {
-  BestScoreSuggestion,
   BoosterCounts,
   CompletedMatchSummary,
   LeagueDashboardSummary,
@@ -393,9 +392,6 @@ export function buildMatchDetail(
     league: { id: league.id, name: league.name },
     predictions: detailed,
     userPrediction: userPred,
-    bestScoresForUser: isLocked
-      ? buildBestScoresForUser(match, peers, userId, leagueId)
-      : [],
     standings: computeStandings(leagueId),
   }
 }
@@ -446,74 +442,6 @@ export function buildPredictionContext(
     })
   }
   return { match, leagues: contexts }
-}
-
-// ── "Best for You" ──────────────────────────────────────────────────────────
-//
-// Given the current live score, compute the top 3 hypothetical exact scores
-// that would maximize the user's points if the match ended right now,
-// considering rarity vs. the current league predictions.
-
-function buildBestScoresForUser(
-  match: Match,
-  peers: Prediction[],
-  userId: UUID,
-  leagueId: UUID,
-): BestScoreSuggestion[] {
-  if (match.homeScore === null || match.awayScore === null) return []
-  const userPred = peers.find((p) => p.userId === userId)
-  if (!userPred) return []
-
-  const memberCount = (leagueMembers[leagueId] ?? []).length
-  const candidates: Array<{ home: number; away: number; pts: PointsBreakdown }> =
-    []
-
-  // Search a small grid of plausible scores.
-  for (let h = 0; h <= 5; h++) {
-    for (let a = 0; a <= 5; a++) {
-      const hypothetical = {
-        homeScore: h,
-        awayScore: a,
-        booster: userPred.booster,
-      }
-      const rarity = computeRarity(
-        { homeScore: h, awayScore: a },
-        peers,
-        memberCount,
-      )
-      const pts = computePoints({
-        prediction: hypothetical,
-        finalScore: { home: match.homeScore, away: match.awayScore },
-        rarity,
-        final: false,
-      })
-      candidates.push({ home: h, away: a, pts })
-    }
-  }
-
-  // Top 3 by total points, prefer including the user's actual pick.
-  candidates.sort((a, b) => b.pts.total - a.pts.total)
-  const top = candidates.slice(0, 3)
-
-  return top.map((c) => ({
-    homeScore: c.home,
-    awayScore: c.away,
-    isCurrentScore:
-      c.home === match.homeScore && c.away === match.awayScore,
-    hypotheticalPoints: c.pts,
-    reasoning: explainPoints(c.pts),
-  }))
-}
-
-function explainPoints(pts: PointsBreakdown): string {
-  if (pts.total === 0) return 'Wrong outcome, no points'
-  const parts: string[] = []
-  if (pts.base === 4) parts.push('4 exact')
-  else if (pts.base === 1) parts.push('1 outcome')
-  if (pts.outcomeBonus > 0) parts.push(`+${pts.outcomeBonus} outcome rarity`)
-  if (pts.exactBonus > 0) parts.push(`+${pts.exactBonus} exact rarity`)
-  const sum = parts.join(' + ')
-  return pts.multiplier > 1 ? `(${sum}) ×${pts.multiplier} booster` : sum
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
