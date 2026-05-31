@@ -52,10 +52,16 @@ export function InviteFriendsModal({
   }
 
   async function share(): Promise<void> {
-    const text = `Join my Eksakt league "${leagueName}":\n${inviteUrl}`
+    // Only pass `url` (not `text`). iOS / many share sheets append the
+    // `url` to `text`, so if the text already embeds the URL it shows
+    // up twice in the outgoing message. Title + url is enough — the
+    // receiving app renders a link preview.
     if (typeof navigator !== 'undefined' && 'share' in navigator) {
       try {
-        await navigator.share({ title: leagueName, text, url: inviteUrl })
+        await navigator.share({
+          title: `Join my Eksakt league "${leagueName}"`,
+          url: inviteUrl,
+        })
         return
       } catch {
         // User cancelled the share sheet — do nothing.
