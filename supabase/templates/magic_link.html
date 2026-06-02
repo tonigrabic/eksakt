@@ -1,11 +1,56 @@
-<h2>Sign in to Eksakt</h2>
-
-<p>Click the link below to sign in. The link works in any browser.</p>
-
-<p>
-  <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=magiclink&next={{ .RedirectTo }}">
-    Sign in to Eksakt
-  </a>
-</p>
-
-<p>If you didn't request this, you can ignore this email.</p>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sign in to Eksakt</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#18181b;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f5;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:480px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+          <tr>
+            <td style="padding:32px 32px 8px 32px;text-align:center;">
+              <div style="display:inline-block;font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#18181b;">Eksakt</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 32px 0 32px;text-align:center;">
+              <h1 style="margin:16px 0 8px 0;font-size:22px;line-height:1.3;font-weight:600;color:#18181b;">Your sign-in code</h1>
+              <p style="margin:0;font-size:15px;line-height:1.5;color:#52525b;">Enter this code in the app to finish signing in.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:24px 32px;text-align:center;">
+              <div style="display:inline-block;padding:18px 28px;background:#f4f4f5;border-radius:12px;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:32px;font-weight:700;letter-spacing:0.4em;color:#18181b;">{{ .Token }}</div>
+              <p style="margin:12px 0 0 0;font-size:13px;color:#71717a;">Code expires in 1 hour.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="border-top:1px solid #e4e4e7;padding-top:24px;text-align:center;">
+                    <p style="margin:0 0 16px 0;font-size:14px;color:#52525b;">Or tap the button to sign in directly:</p>
+                    <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=magiclink&next={{ .RedirectTo }}"
+                       style="display:inline-block;padding:12px 24px;background:#18181b;color:#ffffff;text-decoration:none;border-radius:10px;font-size:15px;font-weight:600;">
+                      Sign in to Eksakt
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;text-align:center;">
+              <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">Didn't request this? You can safely ignore this email — no one can sign in without the code or link above.</p>
+            </td>
+          </tr>
+        </table>
+        <p style="margin:24px 0 0 0;font-size:12px;color:#a1a1aa;">Eksakt — predict scores, beat your friends.</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

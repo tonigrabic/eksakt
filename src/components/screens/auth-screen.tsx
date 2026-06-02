@@ -1,21 +1,26 @@
 'use client'
 
 import { useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Trophy, Mail, AlertCircle, ArrowLeft } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 
+const CODE_LENGTH = 6
+
 export function AuthScreen() {
+  const router = useRouter()
   const searchParams = useSearchParams()
   const callbackError = searchParams.get('error')
   const next = searchParams.get('next') ?? '/dashboard'
 
   const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
   const [isEmailSent, setIsEmailSent] = useState(false)
   const [isSending, setIsSending] = useState(false)
+  const [isVerifying, setIsVerifying] = useState(false)
   const [error, setError] = useState<string | null>(
     callbackError === 'auth_callback_failed'
       ? 'That sign-in link expired. Try again.'
@@ -44,8 +49,32 @@ export function AuthScreen() {
     setIsEmailSent(true)
   }
 
+  const handleVerifyCode = async () => {
+    if (code.length !== CODE_LENGTH || isVerifying) return
+    setError(null)
+    setIsVerifying(true)
+
+    const supabase = createClient()
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email,
+      token: code,
+      type: 'email',
+    })
+
+    setIsVerifying(false)
+    if (verifyError) {
+      setError(verifyError.message)
+      setCode('')
+      return
+    }
+    const safeNext = next.startsWith('/') ? next : '/dashboard'
+    router.push(safeNext)
+    router.refresh()
+  }
+
   const resetForm = () => {
     setIsEmailSent(false)
+    setCode('')
     setError(null)
   }
 
@@ -109,18 +138,60 @@ export function AuthScreen() {
                 {'Check your email'}
               </h2>
               <p className="text-sm text-muted-foreground text-balance">
-                {'We sent a magic link to '}
+                {'We sent a sign-in link and a 6-digit code to '}
                 <span className="font-medium text-foreground">{email}</span>
-                {'. Click the link in the email to sign in.'}
+                {'.'}
               </p>
             </div>
 
-            <div className="pt-2 border-t border-border">
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-foreground">
+                {'Enter the 6-digit code'}
+              </label>
+              <Input
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="\d{6}"
+                maxLength={CODE_LENGTH}
+                placeholder="123456"
+                value={code}
+                onChange={(e) =>
+                  setCode(e.target.value.replace(/\D/g, '').slice(0, CODE_LENGTH))
+                }
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleVerifyCode()
+                }}
+                disabled={isVerifying}
+                className="bg-background text-center text-2xl font-mono tracking-[0.5em] tabular-nums"
+                autoFocus
+              />
+              <Button
+                className="w-full"
+                size="lg"
+                onClick={handleVerifyCode}
+                disabled={code.length !== CODE_LENGTH || isVerifying}
+              >
+                {isVerifying ? 'Verifying…' : 'Sign in'}
+              </Button>
+            </div>
+
+            {error && (
+              <div className="flex items-start gap-2 rounded-md bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">
+                <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <div className="pt-2 border-t border-border space-y-2">
+              <p className="text-xs text-muted-foreground text-center">
+                {"Or just click the link in the email — it'll sign you in directly."}
+              </p>
               <Button
                 variant="ghost"
                 size="sm"
                 className="w-full text-xs text-muted-foreground"
                 onClick={resetForm}
+                disabled={isVerifying}
               >
                 <ArrowLeft className="h-3.5 w-3.5 mr-1" />
                 {'Use a different email'}
