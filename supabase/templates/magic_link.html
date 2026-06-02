@@ -1,0 +1,11 @@
+<h2>Sign in to Eksakt</h2>
+
+<p>Click the link below to sign in. The link works in any browser.</p>
+
+<p>
+  <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=magiclink&next={{ .RedirectTo }}">
+    Sign in to Eksakt
+  </a>
+</p>
+
+<p>If you didn't request this, you can ignore this email.</p>

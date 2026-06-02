@@ -28,7 +28,9 @@ export function AuthScreen() {
     setIsSending(true)
 
     const supabase = createClient()
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`
+    // emailRedirectTo populates {{ .RedirectTo }} in the email template,
+    // which our /auth/confirm route forwards to after verifying the OTP.
+    const redirectTo = `${window.location.origin}${next}`
     const { error: signInError } = await supabase.auth.signInWithOtp({
       email,
       options: { emailRedirectTo: redirectTo },
@@ -113,19 +115,7 @@ export function AuthScreen() {
               </p>
             </div>
 
-            <div className="space-y-3 pt-2 border-t border-border">
-              <p className="text-xs text-muted-foreground/70 text-center">
-                {'Local dev: open '}
-                <a
-                  href="http://127.0.0.1:54324"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline hover:text-foreground"
-                >
-                  {'Mailpit'}
-                </a>
-                {' to grab the link'}
-              </p>
+            <div className="pt-2 border-t border-border">
               <Button
                 variant="ghost"
                 size="sm"
