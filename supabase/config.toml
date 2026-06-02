@@ -50,6 +50,7 @@ minimum_password_length = 8
 enable_signup = true
 double_confirm_changes = true
 enable_confirmations = false  # magic link is the primary auth — no manual confirmation
+otp_length = 6
 
 [auth.email.template.magic_link]
 subject = "Sign in to Eksakt"
