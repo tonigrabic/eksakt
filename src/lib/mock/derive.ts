@@ -39,7 +39,12 @@ import {
 function getProfile(userId: UUID): Profile {
   return (
     profiles[userId] ??
-    ({ id: userId, displayName: userId, avatarUrl: null } as Profile)
+    ({
+      id: userId,
+      displayName: userId,
+      avatarUrl: null,
+      notificationsEnabled: true,
+    } as Profile)
   )
 }
 

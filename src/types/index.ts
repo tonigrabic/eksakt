@@ -34,6 +34,7 @@ export type Profile = {
   id: UUID
   displayName: string
   avatarUrl: string | null
+  notificationsEnabled: boolean
 }
 
 // ── Football entities ────────────────────────────────────────────────────────
@@ -358,6 +359,7 @@ export type UpdateProfileInput = {
   // avatarUrl to clear the existing one.
   displayName?: string
   avatarUrl?: string | null
+  notificationsEnabled?: boolean
 }
 
 export type CreateLeagueResult = {

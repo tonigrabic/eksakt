@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
+  Bell,
   Camera,
   Check,
   LogOut,
@@ -86,6 +88,16 @@ export function ProfileScreen() {
     setError(null)
     try {
       await updateProfile.mutateAsync({ displayName: trimmedName })
+      setSavedAt(Date.now())
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }
+
+  const handleToggleNotifications = async (enabled: boolean) => {
+    setError(null)
+    try {
+      await updateProfile.mutateAsync({ notificationsEnabled: enabled })
       setSavedAt(Date.now())
     } catch (err) {
       setError((err as Error).message)
@@ -207,6 +219,31 @@ export function ProfileScreen() {
               <span>{error}</span>
             </div>
           )}
+        </Card>
+
+        <Card className="bg-card border-border p-4">
+          <label
+            htmlFor="email-reminders"
+            className="flex items-center gap-4 cursor-pointer"
+          >
+            <div className="h-9 w-9 rounded-full bg-secondary flex items-center justify-center flex-shrink-0">
+              <Bell className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-foreground">
+                {'Email reminders'}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {'Get an email about an hour before kickoff for games you haven’t predicted.'}
+              </p>
+            </div>
+            <Switch
+              id="email-reminders"
+              checked={profile.notificationsEnabled}
+              onCheckedChange={handleToggleNotifications}
+              disabled={isBusy}
+            />
+          </label>
         </Card>
 
         <ProfileStatsCard />
