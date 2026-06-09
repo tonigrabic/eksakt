@@ -41,10 +41,48 @@ it goes into Supabase secrets:
 supabase secrets set FOOTBALL_DATA_API_KEY=<your-key>
 ```
 
-Then serve the functions locally:
+The `send-prediction-reminders` function (daily "you haven't predicted
+yet" emails) picks its email transport at runtime — see
+`supabase/functions/_shared/email.ts`. In **production** it sends through
+Resend, so set:
 
 ```bash
-supabase functions serve --env-file .env.local
+supabase secrets set \
+  RESEND_API_KEY=re_<your-key> \
+  RESEND_FROM="Eksakt <reminders@your-domain>" \
+  APP_URL=https://<your-app-origin>
+```
+
+Create the key at resend.com and verify a sending domain first.
+`RESEND_API_KEY` selects the Resend provider; `RESEND_FROM` is the sender;
+`APP_URL` is the (optional) CTA link target. `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` are injected by the platform automatically.
+
+**Locally** you don't need Resend at all. Set `MAILPIT_URL` instead and
+reminder emails drop into the Supabase Mailpit inbox
+(http://127.0.0.1:54324) — the same place auth emails land. These go in
+`supabase/functions/.env` (already gitignored):
+
+```
+MAILPIT_URL=http://supabase_inbucket_eksakt:8025
+RESEND_FROM=Eksakt <reminders@eksakt.app>
+APP_URL=http://127.0.0.1:3000
+```
+
+`MAILPIT_URL` takes priority over `RESEND_API_KEY`, so a dev box never
+sends real mail. Then serve the functions locally:
+
+```bash
+supabase functions serve --env-file supabase/functions/.env
+```
+
+To fire a reminder by hand (pick a 12h window that contains some
+not-yet-predicted fixtures) and watch it land in Mailpit:
+
+```bash
+curl -X POST http://127.0.0.1:54321/functions/v1/send-prediction-reminders \
+  -H 'Content-Type: application/json' \
+  -d '{"sessionStart":"2026-06-24T19:00:00Z","sessionEnd":"2026-06-25T07:00:00Z"}'
 ```
 
 ## 3. pg_cron Vault secrets

@@ -849,9 +849,15 @@ export async function updateProfile(input: UpdateProfileInput): Promise<Profile>
   const { id: userId } = await requireUser()
   const supabase = createClient()
 
-  const patch: { display_name?: string; avatar_url?: string | null } = {}
+  const patch: {
+    display_name?: string
+    avatar_url?: string | null
+    notifications_enabled?: boolean
+  } = {}
   if (input.displayName !== undefined) patch.display_name = input.displayName
   if (input.avatarUrl !== undefined) patch.avatar_url = input.avatarUrl
+  if (input.notificationsEnabled !== undefined)
+    patch.notifications_enabled = input.notificationsEnabled
 
   const { data, error } = await supabase
     .from('profiles')

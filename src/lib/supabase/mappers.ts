@@ -25,6 +25,7 @@ export function rowToProfile(row: Tables['profiles']['Row']): Profile {
     id: row.id,
     displayName: row.display_name,
     avatarUrl: row.avatar_url,
+    notificationsEnabled: row.notifications_enabled,
   }
 }
 
