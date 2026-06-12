@@ -1235,7 +1235,7 @@ function PlayedCard({
 
   const tagLabel =
     status === 'exact'
-      ? 'Exact'
+      ? 'Eksakt'
       : status === 'outcome'
         ? 'Outcome'
         : status === 'wrong'

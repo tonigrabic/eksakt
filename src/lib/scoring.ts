@@ -1,8 +1,9 @@
 // Croatian-rules scoring engine. Pure functions only — same code runs in
 // the BE Edge Function and the UI's mock layer.
 //
-// Mirrors compute_points_for_match in 00018_simplify_scoring.sql.
-// If you change scoring rules here, change that migration too.
+// Mirrors compute_points_for_match in 00018_simplify_scoring.sql and
+// rarity_bonus in 00022_loosen_outcome_rarity.sql. If you change
+// scoring rules here, add a migration too.
 
 import {
   type Booster,
@@ -24,10 +25,8 @@ function outcome(s: Score): Outcome {
 //
 // Rule (in priority order):
 //   1. Lone caller — `matchingCount <= 1` → +3.
-//      Honours small leagues where the % rule alone would never fire
-//      (in a 10-person league, one matching pick is 10%, too common
-//      under the old <5% cliff).
-//   2. < 5% of the league matched → +3.
+//      Honours small leagues where the % rule alone would never fire.
+//   2. < 10% of the league matched → +3.
 //   3. <= 15% matched → +1.
 //   4. otherwise → 0.
 function rarityBonus(
@@ -37,7 +36,7 @@ function rarityBonus(
   if (matchingCount <= 1) return 3
   if (memberCount === 0) return 0
   const pct = (matchingCount / memberCount) * 100
-  if (pct < 5) return 3
+  if (pct < 10) return 3
   if (pct <= 15) return 1
   return 0
 }

@@ -31,12 +31,13 @@ A mobile-first social prediction app where friends compete in private football l
 ### Rarity Bonus Points
 | Condition | Bonus |
 |-----------|-------|
-| <5% of players predicted the correct outcome | +3 |
-| 5-15% of players predicted the correct outcome | +1 |
-| <5% of players predicted the exact score | +3 |
-| 5-15% of players predicted the exact score | +1 |
+| Only player who predicted the correct outcome | +3 |
+| <10% of players predicted the correct outcome | +3 |
+| 10-15% of players predicted the correct outcome | +1 |
 
-**Maximum per match:** 10 points (1 + 3 + 3 + 3)
+The exact-score rarity bonus was removed (migration 00018); exact score earns the flat 4 base points.
+
+**Maximum per match:** 7 points (4 + 3), before boosters
 
 ### Boosters (League Setting)
 League admins can enable boosters -- limited-use multipliers (x2, x3, x5) that players can apply to predictions they feel confident about. Configurable pool per competition (e.g., 2x x2, 1x x3, 1x x5).
