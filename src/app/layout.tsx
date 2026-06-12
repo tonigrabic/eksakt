@@ -33,6 +33,11 @@ export const metadata: Metadata = {
   title: "Eksakt — Football Prediction Leagues",
   description:
     "Predict exact football scores and compete in private leagues with friends",
+  other: {
+    // Belt-and-suspenders with <html translate="no">: older Chrome builds
+    // only honor the meta tag.
+    google: "notranslate",
+  },
 };
 
 export const viewport: Viewport = {
@@ -50,7 +55,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    // translate="no" keeps Google Translate from rewriting the DOM — its
+    // <font>-tag mutations crash React when live scores update (react#11538).
+    <html lang="en" translate="no" className="dark">
       <body
         className={`${archivo.variable} ${bigShoulders.variable} ${geistMono.variable} font-sans antialiased`}
       >
