@@ -38,8 +38,10 @@ export type FootballApiMatch = {
   matchday: number | null
   stage: string // "GROUP_STAGE", "LAST_16", "QUARTER_FINALS", ...
   group: string | null // "GROUP_A" etc.
-  // football-data.org's "minute" field on live matches.
-  // Present only when status is IN_PLAY/PAUSED. May be absent on free tier.
+  // football-data.org's "minute" field on live matches. Present only when
+  // status is IN_PLAY/PAUSED, and only when the request opts in via the
+  // `X-Api-Version: v4.1` header (see request()). Otherwise null/absent and
+  // we fall back to the wall-clock estimate in displayLiveMinute().
   minute?: number | string | null
   injuryTime?: number | null
   homeTeam: FootballApiTeam | { id: null; name: string | null }
@@ -136,7 +138,11 @@ export function createFootballApiClient(apiKey: string): FootballApiClient {
 
   async function request<T>(path: string): Promise<T> {
     const res = await fetch(`${BASE_URL}${path}`, {
-      headers: { 'X-Auth-Token': apiKey },
+      // `X-Api-Version: v4.1` opts into the `minute` / `injuryTime` fields
+      // on live matches. Without it the API returns the "stable" v4 shape
+      // where `minute` is always null and we fall back to the wall-clock
+      // estimate in displayLiveMinute(). Harmless on non-match endpoints.
+      headers: { 'X-Auth-Token': apiKey, 'X-Api-Version': 'v4.1' },
     })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
