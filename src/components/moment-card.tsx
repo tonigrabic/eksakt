@@ -16,6 +16,7 @@ import {
   BOOSTER_RAIL,
   BoosterPill,
   Crest,
+  teamCode,
   teamName,
 } from '@/components/match-ui'
 import type {
@@ -25,6 +26,7 @@ import type {
   MomentKind,
   MomentViewer,
   Profile,
+  Team,
 } from '@/types'
 
 // glyph + left-rail colour + glyph-chip background per kind.
@@ -54,6 +56,28 @@ function overviewHeadline(o: MatchOverview): string {
   const { side, team, count } = o.consensus
   const label = side === 'draw' ? 'a draw' : teamName(team)
   return `${count} of ${o.predictionCount} backed ${label}`
+}
+
+function matchOutcome(hs: number, as: number): 'home' | 'draw' | 'away' {
+  if (hs > as) return 'home'
+  if (hs < as) return 'away'
+  return 'draw'
+}
+
+// One-line read on how the room did — the consensus measured against the actual
+// result. Null only when nobody predicted (the crowd strip is then hidden).
+function crowdVerdict(o: MatchOverview, hs: number, as: number): string | null {
+  if (o.predictionCount === 0) return null
+  if (o.correctCount === 0) return 'Nobody saw it coming'
+  if (o.predictionCount >= 2 && o.correctCount === o.predictionCount) {
+    return 'Everyone called it'
+  }
+  if (o.consensus) {
+    return o.consensus.side === matchOutcome(hs, as)
+      ? 'Crowd called it'
+      : 'Crowd got it wrong'
+  }
+  return null
 }
 
 function GlyphChip({
@@ -109,6 +133,64 @@ function MomentLeagueTag({
     <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-secondary px-2 py-[3px] text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground max-w-[140px]">
       {league.icon && <span className="shrink-0">{league.icon}</span>}
       <span className="truncate">{league.name}</span>
+    </span>
+  )
+}
+
+// Final score with flags + team abbreviations: "🇳🇱 NED 5–1 SWE 🇸🇪". The losing
+// side is dimmed. Reuses the shared Crest (flag) + teamCode (abbreviation).
+function ScoreLine({
+  home,
+  away,
+  homeScore,
+  awayScore,
+}: {
+  home: Team | null
+  away: Team | null
+  homeScore: number
+  awayScore: number
+}) {
+  const homeLost = homeScore < awayScore
+  const awayLost = awayScore < homeScore
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      <Crest team={home} size="xs" />
+      <span
+        className={cn(
+          'font-mono text-[10px] font-bold uppercase tracking-[0.04em] text-muted-foreground',
+          homeLost && 'opacity-45',
+        )}
+      >
+        {teamCode(home)}
+      </span>
+      <span
+        className={cn(
+          'font-display text-[24px] font-black leading-none tracking-[-0.03em]',
+          homeLost && 'opacity-45',
+        )}
+      >
+        {homeScore}
+      </span>
+      <span className="font-display text-[14px] font-black leading-none text-dim">
+        {'–'}
+      </span>
+      <span
+        className={cn(
+          'font-display text-[24px] font-black leading-none tracking-[-0.03em]',
+          awayLost && 'opacity-45',
+        )}
+      >
+        {awayScore}
+      </span>
+      <span
+        className={cn(
+          'font-mono text-[10px] font-bold uppercase tracking-[0.04em] text-muted-foreground',
+          awayLost && 'opacity-45',
+        )}
+      >
+        {teamCode(away)}
+      </span>
+      <Crest team={away} size="xs" />
     </span>
   )
 }
@@ -206,8 +288,8 @@ function ViewerResultStrip({ viewer }: { viewer: MomentViewer }) {
       </span>
       <span
         className={cn(
-          'font-display text-[22px] font-black leading-none tracking-[-0.03em]',
-          t >= 5 ? 'text-primary' : t >= 1 ? 'text-foreground' : 'text-dim',
+          'font-display text-[30px] font-black leading-none tracking-[-0.03em]',
+          t >= 4 ? 'text-primary' : t >= 1 ? 'text-foreground' : 'text-dim',
         )}
       >
         {viewer.status === 'none' ? '—' : t > 0 ? `+${t}` : '0'}
@@ -231,18 +313,50 @@ export function MomentCard({
   const { match, league, overview, headline } = item
   const hs = match.homeScore ?? 0
   const as = match.awayScore ?? 0
-  const homeLost = hs < as
-  const awayLost = as < hs
 
   const v = headline ? visualFor(headline) : OVERVIEW_VISUAL
-  const headlineText = headline ? headline.headline : overviewHeadline(overview)
-  const subtext = headline?.subtext
   const actors = headline?.actors ?? (headline?.actor ? [headline.actor] : [])
+  // A "person" story is a standout someone owns (vs a whole-league collective).
+  const isPerson = Boolean(headline && headline.kind !== 'collective' && actors.length > 0)
+
+  const verdict = crowdVerdict(overview, hs, as)
+  // Story line: the person's standout when there is one, else the crowd verdict.
+  const storyText = isPerson
+    ? headline!.headline
+    : (verdict ?? overviewHeadline(overview))
+  const storyPoints = isPerson ? headline!.points : undefined
+
+  // Crowd strip — who won the match + how many nailed it. Only bill a "winner"
+  // when the haul is actually meaningful (≥3; a lone +1 isn't a win), and
+  // suppress it when it's the same player the story line already features.
+  const topScorer = overview.topScorer
+  const showHaul =
+    topScorer != null &&
+    overview.topPoints >= 3 &&
+    !(isPerson && topScorer.id === actors[0]?.id)
+  const crowdStats = [
+    showHaul ? `${topScorer!.displayName} +${overview.topPoints}` : null,
+    overview.exactCount > 0 ? `${overview.exactCount} Eksakt` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  // Left of the bar: the verdict (when the story is a person) else participation
+  // — so the verdict shows exactly once.
+  const crowdLead = isPerson ? verdict : `${overview.predictionCount} played`
 
   // On the Played feed the rail reflects YOUR result; on the dashboard it
   // reflects the headline story's kind.
   const rail =
     showViewerResult && item.viewer ? VIEWER_RAIL[item.viewer.status] : v.rail
+
+  const splitTotal = Math.max(
+    1,
+    overview.homeCount + overview.drawCount + overview.awayCount,
+  )
+  const seg = (n: number, cls: string) =>
+    n > 0 ? (
+      <span className={cls} style={{ width: `${(n / splitTotal) * 100}%` }} />
+    ) : null
 
   return (
     <Link
@@ -251,78 +365,79 @@ export function MomentCard({
     >
       <span className={cn('absolute left-0 top-0 bottom-0 w-[3px]', rail)} />
 
+      {/* header: the fixture leads — glyph + flags + abbreviations + score */}
       <div className="flex items-center justify-between gap-2 pt-[11px] pr-[14px] pl-4">
         <span className="flex min-w-0 items-center gap-2">
-          <GlyphChip glyph={v.glyph} chip={v.chip} className="size-[22px] text-[12px]" />
-          <span className="truncate text-[10px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground">
-            {match.round.name} {'· Final'}
-          </span>
+          <GlyphChip
+            glyph={v.glyph}
+            chip={v.chip}
+            className="size-[22px] shrink-0 text-[12px]"
+          />
+          <ScoreLine
+            home={match.homeTeam}
+            away={match.awayTeam}
+            homeScore={hs}
+            awayScore={as}
+          />
         </span>
         {showLeagueTag && <MomentLeagueTag league={league} />}
       </div>
 
-      <div className="grid grid-cols-[1fr_1px_auto] items-center gap-[14px] pt-2.5 pb-3 pr-[14px] pl-4">
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <span className="line-clamp-2 font-display text-[17px] font-extrabold uppercase leading-[1.05] tracking-[0.005em]">
-            {headlineText}
-          </span>
-          {subtext && (
-            <span className="truncate text-[12px] leading-snug text-muted-foreground">
-              {subtext}
-            </span>
+      {/* story: who starred (a person) or the crowd verdict */}
+      <div className="pt-2 pr-[14px] pl-4">
+        <div className="flex items-center gap-2">
+          {isPerson && actors.length === 1 && (
+            <Avatar profile={actors[0]} size="sm" />
           )}
-          {actors.length > 0 && (
-            <span className="mt-0.5 flex min-w-0 items-center gap-2">
-              {actors.length === 1 ? (
-                <>
-                  <Avatar profile={actors[0]} size="sm" />
-                  <span className="truncate text-[13px] font-medium">
-                    {actors[0].displayName}
-                  </span>
-                </>
-              ) : (
-                <MomentActors actors={actors} />
-              )}
-              {headline?.booster && <BoosterPill booster={headline.booster} />}
+          <span className="min-w-0 flex-1 truncate font-display text-[15px] font-extrabold uppercase leading-tight tracking-[0.005em]">
+            {storyText}
+          </span>
+          {headline?.booster && <BoosterPill booster={headline.booster} />}
+          {typeof storyPoints === 'number' && storyPoints > 0 && (
+            <span className="shrink-0 font-display text-[18px] font-black leading-none tracking-[-0.02em] text-primary">
+              {'+'}
+              {storyPoints}
             </span>
           )}
         </div>
-
-        <span className="h-[44px] w-px bg-border" />
-
-        <div className="flex min-w-[64px] flex-col items-end gap-[3px]">
-          <span className="text-[9px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground">
-            {'Final'}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Crest team={match.homeTeam} size="xs" />
-            <span
-              className={cn(
-                'font-display text-[26px] font-black leading-none tracking-[-0.03em]',
-                homeLost && 'opacity-45',
-              )}
-            >
-              {hs}
-            </span>
-            <span className="font-display text-[15px] font-black leading-none text-dim">
-              {'–'}
-            </span>
-            <span
-              className={cn(
-                'font-display text-[26px] font-black leading-none tracking-[-0.03em]',
-                awayLost && 'opacity-45',
-              )}
-            >
-              {as}
-            </span>
-            <Crest team={match.awayTeam} size="xs" />
-          </span>
-        </div>
+        {/* Name the players behind a shared moment (e.g. the Eksakt-getters)
+            rather than showing anonymous avatars. */}
+        {isPerson && actors.length > 1 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {actors.slice(0, 4).map((a) => (
+              <span key={a.id} className="inline-flex items-center gap-1.5">
+                <Avatar profile={a} size="xs" />
+                <span className="text-[12px] font-medium">{a.displayName}</span>
+              </span>
+            ))}
+            {actors.length > 4 && (
+              <span className="font-mono text-[11px] text-muted-foreground">
+                {'+'}
+                {actors.length - 4}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
+      {/* crowd: verdict / participation + who won + exacts, over the split bar */}
       {overview.predictionCount > 0 && (
-        <OverviewStrip overview={overview} className="border-t border-border" />
+        <div className="px-4 pt-2.5 pb-2.5">
+          <div className="mb-1.5 flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-[0.06em]">
+            <span className="truncate text-muted-foreground">{crowdLead}</span>
+            {crowdStats && <span className="shrink-0 text-dim">{crowdStats}</span>}
+          </div>
+          <span
+            className="flex h-[5px] overflow-hidden rounded-full bg-secondary"
+            title={`${overview.homeCount} home · ${overview.drawCount} draw · ${overview.awayCount} away`}
+          >
+            {seg(overview.homeCount, 'bg-primary/55')}
+            {seg(overview.drawCount, 'bg-muted-foreground/40')}
+            {seg(overview.awayCount, 'bg-info/55')}
+          </span>
+        </div>
       )}
+
       {showViewerResult && item.viewer && (
         <ViewerResultStrip viewer={item.viewer} />
       )}
