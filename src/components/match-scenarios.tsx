@@ -161,6 +161,36 @@ export function LiveHeadline({ scenario }: { scenario: MatchScenario }) {
   )
 }
 
+// Compact one-line "as it stands" strip for the league board's live cards —
+// the live headline only, sized to sit as a card section (mirrors the dashed
+// "Your pick" strip). Re-renders on every goal via the parent's memo.
+export function LiveStoryStrip({ scenario }: { scenario: MatchScenario }) {
+  const { side, overview, headline } = scenario
+  return (
+    <div className="flex items-center gap-2.5 border-t border-dashed border-hair-strong px-[14px] py-[9px]">
+      <span className={cn('h-7 w-[3px] shrink-0 rounded-full', SIDE_RAIL[side])} />
+      <div className="min-w-0 flex-1">
+        <span className="inline-flex items-center gap-[5px] text-[9px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground">
+          <span className="size-[5px] rounded-full bg-destructive animate-pulse" />
+          {'As it stands'}
+        </span>
+        <p className="truncate font-display text-[13px] font-bold uppercase leading-tight tracking-[0.01em]">
+          {headline ? (
+            <>
+              <span className="mr-1">{KIND_GLYPH[headline.kind]}</span>
+              {headline.headline}
+            </>
+          ) : overview.predictionCount > 0 ? (
+            'Still anyone’s game'
+          ) : (
+            'No one predicted this'
+          )}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function ScenarioCard({ scenario }: { scenario: MatchScenario }) {
   const { finalScore, side, isCurrent, overview, headline } = scenario
   return (

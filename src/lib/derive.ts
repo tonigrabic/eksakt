@@ -865,6 +865,29 @@ export function deriveScenarios(args: {
   )
 }
 
+/**
+ * The "as it stands" scenario for a live match — the story if it ended on the
+ * current score. Used for the compact live headline on the league board's live
+ * cards; re-derives on every goal. Null when not live / no picks / no score.
+ */
+export function deriveLiveHeadline(args: {
+  match: Match
+  predictions: PredictionWithDetails[]
+  memberCount: number
+  league: { id: UUID; name: string; icon: string | null }
+}): MatchScenario | null {
+  const { match, predictions, memberCount, league } = args
+  if (match.status !== 'live' || predictions.length === 0) return null
+  if (match.homeScore == null || match.awayScore == null) return null
+  return deriveScenario({
+    match,
+    predictions,
+    memberCount,
+    league,
+    finalScore: { home: match.homeScore, away: match.awayScore },
+  })
+}
+
 // ── League utilities ────────────────────────────────────────────────────────
 
 /**

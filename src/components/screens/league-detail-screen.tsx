@@ -19,6 +19,12 @@ import { useRealtimeMatch } from '@/hooks/use-realtime-match'
 import { useLiveMinute } from '@/hooks/use-live-minute'
 import { useRecentMoments } from '@/hooks/use-recent-moments'
 import { MomentCard } from '@/components/moment-card'
+import { LiveStoryStrip, PredictionBoard } from '@/components/match-scenarios'
+import {
+  deriveLiveHeadline,
+  deriveMatchOverview,
+  derivePredictionGroups,
+} from '@/lib/derive'
 import { AnimatedScore } from '@/components/animated-score'
 import { InviteFriendsModal } from '@/components/modals/invite-friends-modal'
 import {
@@ -228,6 +234,12 @@ export function LeagueDetailScreen({ leagueId }: Props) {
                     key={m.match.id}
                     summary={m}
                     leagueId={leagueId}
+                    memberCount={league.memberCount}
+                    league={{
+                      id: league.id,
+                      name: league.name,
+                      icon: league.icon,
+                    }}
                     collapsible={collapsible}
                     expanded={!collapsible || openLiveId === m.match.id}
                     onToggle={() =>
@@ -370,12 +382,16 @@ const LIVE_PICKS_PREVIEW = 5
 function LiveScoreboard({
   summary,
   leagueId,
+  memberCount,
+  league,
   expanded,
   collapsible,
   onToggle,
 }: {
   summary: LiveMatchSummary
   leagueId: UUID
+  memberCount: number
+  league: { id: UUID; name: string; icon: string | null }
   expanded: boolean
   collapsible: boolean
   onToggle: () => void
@@ -391,6 +407,29 @@ function LiveScoreboard({
   const userPts = userPrediction?.points?.total ?? 0
   const [showAll, setShowAll] = useState(false)
   const matchHref = `/matches/${match.id}?league=${leagueId}`
+
+  // The live story preview: "as it stands" headline (always) + the grouped
+  // "who picked what" board (shown when the picks accordion is expanded). Both
+  // re-derive on every realtime score tick. Pure — over the picks the card
+  // already carries.
+  const story = useMemo(
+    () => deriveLiveHeadline({ match, predictions: rankedPredictions, memberCount, league }),
+    [match, rankedPredictions, memberCount, league],
+  )
+  const board = useMemo(
+    () =>
+      rankedPredictions.length > 0
+        ? {
+            groups: derivePredictionGroups({ match, predictions: rankedPredictions }),
+            overview: deriveMatchOverview({
+              match,
+              predictions: rankedPredictions,
+              memberCount,
+            }),
+          }
+        : null,
+    [match, rankedPredictions, memberCount],
+  )
 
   const leader = rankedPredictions[0] ?? null
   const youIdx = userPrediction
@@ -445,6 +484,9 @@ function LiveScoreboard({
           </span>
         </div>
       </div>
+
+      {/* as it stands — live story headline (re-writes on every goal) */}
+      {story && <LiveStoryStrip scenario={story} />}
 
       {/* your pick */}
       {userPrediction && (
@@ -515,17 +557,24 @@ function LiveScoreboard({
           </span>
         </button>
       ) : (
-        <LivePicks
-          ranked={rankedPredictions}
-          youId={userPrediction?.id ?? null}
-          youIdx={youIdx}
-          showAll={showAll}
-          onToggleShowAll={() => setShowAll((v) => !v)}
-          collapsible={collapsible}
-          onCollapse={onToggle}
-          matchHref={`/matches/${match.id}?league=${leagueId}`}
-          predictionCount={predictionCount}
-        />
+        <>
+          {board && (
+            <div className="border-t border-border px-[14px] py-[11px]">
+              <PredictionBoard groups={board.groups} overview={board.overview} />
+            </div>
+          )}
+          <LivePicks
+            ranked={rankedPredictions}
+            youId={userPrediction?.id ?? null}
+            youIdx={youIdx}
+            showAll={showAll}
+            onToggleShowAll={() => setShowAll((v) => !v)}
+            collapsible={collapsible}
+            onCollapse={onToggle}
+            matchHref={`/matches/${match.id}?league=${leagueId}`}
+            predictionCount={predictionCount}
+          />
+        </>
       )}
     </div>
   )
