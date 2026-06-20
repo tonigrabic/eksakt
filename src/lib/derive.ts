@@ -6,12 +6,14 @@
 // and add them to the input shape.
 
 import type {
+  Booster,
   BoosterCounts,
   CompletedMatchSummary,
   LeagueMember,
   LiveMatchSummary,
   Match,
   MatchOverview,
+  MatchScenario,
   Moment,
   MomentFeedItem,
   MomentKind,
@@ -19,8 +21,10 @@ import type {
   MomentViewer,
   PointsBreakdown,
   Prediction,
+  PredictionGroup,
   PredictionWithDetails,
   Profile,
+  ScoreSlice,
   StandingRow,
   UpcomingMatchSummary,
   UUID,
@@ -667,6 +671,201 @@ export function toFeedItem(args: {
     kickoffTime: match.kickoffTime,
     viewer,
   }
+}
+
+// ── Live-match board + scenarios ──────────────────────────────────────────────
+//
+// While a match is live, peers' picks are visible and the scorer is pure, so we
+// can bring the finished-match "story" energy forward: group who picked what,
+// and project how a few plausible final scores would shake out the points. All
+// pure — same predictions + memberCount useMatch already returns.
+
+const SIDE_ORDER: Record<'home' | 'away' | 'draw', number> = {
+  home: 0,
+  away: 1,
+  draw: 2,
+}
+
+// Modal booster among a set of predictions (most common; null when none boosted
+// or on a tie at zero). Drives the slice's pill.
+function modalBooster(preds: PredictionWithDetails[]): Booster | null {
+  const counts = new Map<Booster, number>()
+  for (const p of preds) {
+    if (p.booster) counts.set(p.booster, (counts.get(p.booster) ?? 0) + 1)
+  }
+  let best: Booster | null = null
+  let bestN = 0
+  for (const [b, n] of counts) {
+    if (n > bestN) {
+      bestN = n
+      best = b
+    }
+  }
+  return best
+}
+
+/**
+ * Group a match's visible picks by outcome side, then by exact scoreline — the
+ * "who picked what" board. Sides ordered by backing count desc (tie-break
+ * home > away > draw); scorelines within a side by backer count desc.
+ */
+export function derivePredictionGroups(args: {
+  match: Match
+  predictions: PredictionWithDetails[]
+}): PredictionGroup[] {
+  const { match, predictions } = args
+  const bySide: Record<'home' | 'draw' | 'away', PredictionWithDetails[]> = {
+    home: [],
+    draw: [],
+    away: [],
+  }
+  for (const p of predictions) {
+    bySide[resultOutcome(p.homeScore, p.awayScore)].push(p)
+  }
+
+  const groups: PredictionGroup[] = []
+  for (const side of ['home', 'draw', 'away'] as const) {
+    const preds = bySide[side]
+    if (preds.length === 0) continue
+
+    // Bucket by exact scoreline.
+    const slices = new Map<string, PredictionWithDetails[]>()
+    for (const p of preds) {
+      const key = `${p.homeScore}-${p.awayScore}`
+      const bucket = slices.get(key)
+      if (bucket) bucket.push(p)
+      else slices.set(key, [p])
+    }
+
+    const scorelines: ScoreSlice[] = [...slices.values()]
+      .map((bucket) => ({
+        homeScore: bucket[0].homeScore,
+        awayScore: bucket[0].awayScore,
+        players: bucket.map((p) => p.profile),
+        booster: modalBooster(bucket),
+      }))
+      .sort(
+        (a, b) =>
+          b.players.length - a.players.length ||
+          b.homeScore + b.awayScore - (a.homeScore + a.awayScore),
+      )
+
+    groups.push({
+      side,
+      team: side === 'home' ? match.homeTeam : side === 'away' ? match.awayTeam : null,
+      count: preds.length,
+      scorelines,
+    })
+  }
+
+  return groups.sort(
+    (a, b) => b.count - a.count || SIDE_ORDER[a.side] - SIDE_ORDER[b.side],
+  )
+}
+
+/**
+ * Project one hypothetical final score: re-score every visible pick against it
+ * (the real scorer — boosters and rarity included) and build the league story
+ * it would produce, reusing deriveMatchOverview / deriveMatchMoments.
+ */
+export function deriveScenario(args: {
+  match: Match
+  predictions: PredictionWithDetails[]
+  memberCount: number
+  league: { id: UUID; name: string; icon: string | null }
+  finalScore: { home: number; away: number }
+}): MatchScenario {
+  const { match, predictions, memberCount, league, finalScore } = args
+
+  // Synthetic finished match so the story engine treats it as decided.
+  const synthetic: Match = {
+    ...match,
+    status: 'finished',
+    homeScore: finalScore.home,
+    awayScore: finalScore.away,
+  }
+
+  // Re-score each pick directly (not computePredictionPoints, which would
+  // short-circuit to any persisted/stored row — we want the hypothetical).
+  const scored: PredictionWithDetails[] = predictions.map((p) => ({
+    ...p,
+    points: computePoints({
+      prediction: p,
+      finalScore,
+      rarity: computeRarity(p, predictions, memberCount),
+      final: true,
+    }),
+  }))
+
+  const overview = deriveMatchOverview({ match: synthetic, predictions: scored, memberCount })
+  const moments = deriveMatchMoments({
+    match: synthetic,
+    predictions: scored,
+    memberCount,
+    league,
+  })
+
+  return {
+    finalScore,
+    side: resultOutcome(finalScore.home, finalScore.away),
+    isCurrent:
+      match.homeScore === finalScore.home && match.awayScore === finalScore.away,
+    overview,
+    headline: pickHeadline(moments),
+  }
+}
+
+/**
+ * The two "next goal" scenarios for a live match: who's in for the big points
+ * and what needs to happen. From the current score, project the immediate
+ * results — the home team scoring (H+1 : A) and the away team scoring
+ * (H : A+1) — and, for each, the players who'd nail that exact scoreline
+ * (their projected total, boosters and rarity included), sorted biggest-first.
+ *
+ * Empty unless the match is live with a known score and visible picks. Re-runs
+ * on every goal (the score moves).
+ */
+export function deriveNextGoalScenarios(args: {
+  match: Match
+  predictions: PredictionWithDetails[]
+  memberCount: number
+  league: { id: UUID; name: string; icon: string | null }
+}): MatchScenario[] {
+  const { match, predictions, memberCount, league } = args
+  if (match.status !== 'live' || predictions.length === 0) return []
+  if (match.homeScore == null || match.awayScore == null) return []
+
+  const h = match.homeScore
+  const a = match.awayScore
+  const candidates: { finalScore: { home: number; away: number }; scorer: 'home' | 'away' }[] = []
+  if (match.homeTeam) candidates.push({ finalScore: { home: h + 1, away: a }, scorer: 'home' })
+  if (match.awayTeam) candidates.push({ finalScore: { home: h, away: a + 1 }, scorer: 'away' })
+
+  return candidates.map(({ finalScore, scorer }) => {
+    const scenario = deriveScenario({ match, predictions, memberCount, league, finalScore })
+    // "In for big points" = whoever picked this exact scoreline; under it they
+    // jump from a correct-outcome +1 to the full exact (×booster, ×rarity).
+    const winners = predictions
+      .filter(
+        (p) => p.homeScore === finalScore.home && p.awayScore === finalScore.away,
+      )
+      .map((p) => ({
+        profile: p.profile,
+        points: computePoints({
+          prediction: p,
+          finalScore,
+          rarity: computeRarity(p, predictions, memberCount),
+          final: true,
+        }).total,
+        booster: p.booster ?? null,
+      }))
+      .sort(
+        (x, y) =>
+          y.points - x.points ||
+          x.profile.displayName.localeCompare(y.profile.displayName),
+      )
+    return { ...scenario, scorer, winners }
+  })
 }
 
 // ── League utilities ────────────────────────────────────────────────────────

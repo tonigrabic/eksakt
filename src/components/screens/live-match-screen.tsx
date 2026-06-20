@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, ChevronDown, Star, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -17,7 +17,13 @@ import {
   teamName,
 } from '@/components/match-ui'
 import { MomentRow, OverviewStrip } from '@/components/moment-card'
-import { deriveMatchMoments, deriveMatchOverview } from '@/lib/derive'
+import { NextGoalScenarios, PredictionBoard } from '@/components/match-scenarios'
+import {
+  deriveMatchMoments,
+  deriveMatchOverview,
+  deriveNextGoalScenarios,
+  derivePredictionGroups,
+} from '@/lib/derive'
 import type {
   PredictionWithDetails,
   StandingRow,
@@ -52,6 +58,22 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
     data?.match.status,
     data?.match.kickoffTime,
   )
+
+  // Live-only "Who picked what" board + next-goal scenarios. Recomputed whenever
+  // the match payload changes — so every goal re-scores the picks and refreshes
+  // who's in line for the big points. Declared before the loading guard to keep
+  // Hook order stable.
+  const liveBoard = useMemo(() => {
+    if (!data || data.match.status !== 'live' || data.predictions.length === 0) {
+      return null
+    }
+    const { match, predictions, memberCount, league } = data
+    return {
+      overview: deriveMatchOverview({ match, predictions, memberCount }),
+      groups: derivePredictionGroups({ match, predictions }),
+      nextGoals: deriveNextGoalScenarios({ match, predictions, memberCount, league }),
+    }
+  }, [data])
 
   if (isLoading || !data) {
     return (
@@ -185,6 +207,25 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
               <MomentRow key={`${m.kind}-${i}`} moment={m} />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* ── Live board + next-goal scenarios (live + someone predicted) ── */}
+      {isLive && liveBoard && (
+        <div className="max-w-2xl mx-auto px-4 pt-[22px]">
+          {liveBoard.nextGoals.length > 0 && (
+            <div className="pb-[22px]">
+              <SectionHead title="If a goal goes in" meta="Next goal" live />
+              <NextGoalScenarios scenarios={liveBoard.nextGoals} match={match} />
+            </div>
+          )}
+
+          <SectionHead
+            title="Who picked what"
+            meta={`${predictions.length} ${predictions.length === 1 ? 'pick' : 'picks'}`}
+            live
+          />
+          <PredictionBoard groups={liveBoard.groups} overview={liveBoard.overview} />
         </div>
       )}
 
