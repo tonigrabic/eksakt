@@ -29,4 +29,7 @@ export const queryKeys = {
     ['match', matchId, leagueId] as const,
   predictionContext: (matchId: string) =>
     ['prediction-context', matchId] as const,
+  // leagueId omitted → cross-league feed (dashboard); set → single league.
+  recentMoments: (leagueId?: string) =>
+    ['recent-moments', leagueId ?? 'all'] as const,
 }

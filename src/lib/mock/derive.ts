@@ -394,10 +394,11 @@ export function buildMatchDetail(
 
   return {
     match,
-    league: { id: league.id, name: league.name },
+    league: { id: league.id, name: league.name, icon: league.icon },
     predictions: detailed,
     userPrediction: userPred,
     standings: computeStandings(leagueId),
+    memberCount: league.memberCount,
   }
 }
 

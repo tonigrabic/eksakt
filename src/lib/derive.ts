@@ -11,6 +11,12 @@ import type {
   LeagueMember,
   LiveMatchSummary,
   Match,
+  MatchOverview,
+  Moment,
+  MomentFeedItem,
+  MomentKind,
+  MomentRarity,
+  MomentViewer,
   PointsBreakdown,
   Prediction,
   PredictionWithDetails,
@@ -19,7 +25,7 @@ import type {
   UpcomingMatchSummary,
   UUID,
 } from '@/types'
-import { computePoints, computeRarity } from '@/lib/scoring'
+import { computePoints, computeRarity, resultOutcome } from '@/lib/scoring'
 
 // ── Points ──────────────────────────────────────────────────────────────────
 
@@ -202,7 +208,9 @@ export function liveMatchSummary(args: {
 }): LiveMatchSummary {
   const { match, predictions, userId, profileById, memberCount } = args
   const ranked = predictions
-    .map((p) => toDetailed(p, match, predictions, profileById, memberCount))
+    .map((p) =>
+      toDetailedPrediction(p, match, predictions, profileById, memberCount),
+    )
     .sort(
       (a, b) =>
         (b.points?.total ?? 0) - (a.points?.total ?? 0) ||
@@ -239,12 +247,21 @@ export function completedMatchSummary(args: {
   return {
     match,
     userPrediction: userPred
-      ? toDetailed(userPred, match, predictions, profileById, memberCount)
+      ? toDetailedPrediction(
+          userPred,
+          match,
+          predictions,
+          profileById,
+          memberCount,
+        )
       : null,
   }
 }
 
-function toDetailed(
+// Map a raw prediction → PredictionWithDetails (profile + points). Shared by
+// the summary builders, getMatchDetail, and the moments feed so they all
+// resolve points the same way (persisted row for finished, recompute live).
+export function toDetailedPrediction(
   prediction: Prediction,
   match: Match,
   peers: Prediction[],
@@ -257,6 +274,398 @@ function toDetailed(
       profileById.get(prediction.userId) ??
       ({ id: prediction.userId, displayName: '?', avatarUrl: null } as Profile),
     points: computePredictionPoints(prediction, match, peers, memberCount),
+  }
+}
+
+// ── Moments (match stories) ──────────────────────────────────────────────────
+//
+// A finished match always yields a MatchOverview (the "what happened for all
+// players" floor) and zero or more standout Moments. All inputs are already
+// fetched elsewhere (predictions carry their persisted points + audit fields),
+// so these are pure and need no I/O.
+
+// Magnitude at which the single biggest total of a match is worth its own
+// "haul" moment (e.g. exact 4 + rare outcome 3, or a boosted exact).
+const HAUL_THRESHOLD = 8
+
+// A booster only headlines when it genuinely paid off big — a x2-on-exact (8)
+// or a x3+ haul — not a x2/x3 stacked on a plain correct outcome (+2/+3),
+// which reads weak against the match's real story.
+const BOOSTER_MIN_TOTAL = 6
+
+// A finished match is an "upset" when only a small fraction of those who
+// predicted got the outcome right — the league-wide "almost nobody saw it".
+const UPSET_MAX_RATIO = 0.25
+
+// Base weight per kind: exact tops ties (the brand mechanic); a *rare* exact
+// still beats a common one via the rarity term below. Collective/mover sit low
+// so they only headline a match that produced nothing flashier.
+const KIND_WEIGHT: Record<MomentKind, number> = {
+  exact: 10,
+  contrarian: 8,
+  haul: 7,
+  booster: 6,
+  mover: 5,
+  collective: 4,
+}
+
+// Points scored carry the most weight: a big haul should be able to out-rank a
+// low-value exact. The kind weight is a head start (exact's brand bonus), but
+// magnitude dominates — so "+12" beats a "+4 on the nose".
+const POINTS_WEIGHT = 1
+const POINTS_CAP = 40
+
+function severity(
+  kind: MomentKind,
+  opts: { points?: number; outcomePct?: number } = {},
+): number {
+  const magnitude = Math.min(opts.points ?? 0, POINTS_CAP) * POINTS_WEIGHT
+  const rarity =
+    opts.outcomePct != null ? (10 - Math.min(opts.outcomePct, 10)) * 0.4 : 0
+  return KIND_WEIGHT[kind] + magnitude + rarity
+}
+
+// Rarity for a prediction: prefer the persisted audit fields (canonical), fall
+// back to recomputing during the post-finish race window where points is null.
+function rarityOf(
+  p: PredictionWithDetails,
+  all: PredictionWithDetails[],
+  memberCount: number,
+): MomentRarity {
+  const pts = p.points
+  if (pts?.memberCount != null) {
+    return {
+      sameOutcomeCount: pts.sameOutcomeCount ?? 0,
+      memberCount: pts.memberCount,
+      outcomePct: pts.outcomePct ?? 0,
+    }
+  }
+  const r = computeRarity(p, all, memberCount)
+  const pct = r.memberCount ? (r.sameOutcomeCount / r.memberCount) * 100 : 0
+  return {
+    sameOutcomeCount: r.sameOutcomeCount,
+    memberCount: r.memberCount,
+    outcomePct: pct,
+  }
+}
+
+/**
+ * The always-on league roll-up for a finished match: participation, the
+ * home/draw/away split, the consensus team, correct/exact counts and the top
+ * haul. Runs for every finished match with predictions — the feed floor.
+ */
+export function deriveMatchOverview(args: {
+  match: Match
+  predictions: PredictionWithDetails[]
+  memberCount: number
+}): MatchOverview {
+  const { match, predictions, memberCount } = args
+  let homeCount = 0
+  let drawCount = 0
+  let awayCount = 0
+  let correctCount = 0
+  let exactCount = 0
+  let topPoints = 0
+  let topScorer: Profile | null = null
+
+  for (const p of predictions) {
+    const out = resultOutcome(p.homeScore, p.awayScore)
+    if (out === 'home') homeCount++
+    else if (out === 'away') awayCount++
+    else drawCount++
+
+    const b = p.points?.base ?? 0
+    if (b >= 1) correctCount++
+    if (b === 4) exactCount++
+
+    const t = p.points?.total ?? 0
+    if (t > topPoints) {
+      topPoints = t
+      topScorer = p.profile
+    }
+  }
+
+  // Consensus = modal side; tie-break home > away > draw (array order).
+  let consensus: MatchOverview['consensus'] = null
+  if (predictions.length > 0) {
+    const sides: NonNullable<MatchOverview['consensus']>[] = [
+      { side: 'home', count: homeCount, team: match.homeTeam },
+      { side: 'away', count: awayCount, team: match.awayTeam },
+      { side: 'draw', count: drawCount, team: null },
+    ]
+    consensus = sides.reduce((best, s) => (s.count > best.count ? s : best))
+  }
+
+  return {
+    memberCount,
+    predictionCount: predictions.length,
+    homeCount,
+    drawCount,
+    awayCount,
+    correctCount,
+    exactCount,
+    topPoints,
+    topScorer,
+    consensus,
+  }
+}
+
+/**
+ * Standout Moments for a finished match (empty for unfinished / unpredicted).
+ * Returns them severity-desc. `mover` is intentionally not produced here — it
+ * needs cross-match standings deltas the caller doesn't supply (deferred).
+ */
+export function deriveMatchMoments(args: {
+  match: Match
+  predictions: PredictionWithDetails[]
+  memberCount: number
+  league: { id: UUID; name: string; icon: string | null }
+}): Moment[] {
+  const { match, predictions, memberCount, league } = args
+  if (
+    match.status !== 'finished' ||
+    match.homeScore == null ||
+    match.awayScore == null ||
+    predictions.length === 0
+  ) {
+    return []
+  }
+
+  const base = (p: PredictionWithDetails) => p.points?.base ?? 0
+  const total = (p: PredictionWithDetails) => p.points?.total ?? 0
+  const correct = predictions.filter((p) => base(p) >= 1)
+  const exacts = predictions.filter((p) => base(p) === 4)
+  const scoreline = `${match.homeScore}–${match.awayScore}`
+
+  const moments: Moment[] = []
+  const make = (m: Omit<Moment, 'matchId' | 'league' | 'match'>): Moment => ({
+    ...m,
+    matchId: match.id,
+    league,
+    match,
+  })
+
+  // Each player stars in at most one standout — their highest-value angle —
+  // so the story list never repeats the same name. Priority follows kind
+  // weight: exact > contrarian > haul > booster.
+  const starred = new Set<UUID>()
+
+  // 🎯 exact — the brand mechanic. A *boosted* exact is a story on its own and
+  // must stand out even when several players nailed the score ("3 Eksakts — but
+  // Sam went big with ×5").
+  if (exacts.length > 0) {
+    const sorted = [...exacts].sort(
+      (a, b) =>
+        total(b) - total(a) ||
+        a.profile.displayName.localeCompare(b.profile.displayName),
+    )
+    const top = sorted[0]
+    const topMult = top.points?.multiplier ?? 1
+    exacts.forEach((p) => starred.add(p.userId))
+
+    if (topMult > 1) {
+      // Boosted exact: feature the player + multiplier, with the Eksakt count
+      // as context when there were several. Big points → high severity, so it
+      // headlines the match.
+      const note = exacts.length > 1 ? `${exacts.length} Eksakts — ` : ''
+      moments.push(
+        make({
+          kind: 'exact',
+          actor: top.profile,
+          points: total(top),
+          booster: top.booster ?? undefined,
+          headline: `${note}${top.profile.displayName} went big with ×${topMult}`,
+          subtext: `Nailed ${scoreline} · +${total(top)}`,
+          severity: severity('exact', { points: total(top) }) + 1,
+        }),
+      )
+    } else if (exacts.length === 1) {
+      moments.push(
+        make({
+          kind: 'exact',
+          actor: top.profile,
+          points: total(top),
+          headline: `${top.profile.displayName} nailed it`,
+          subtext: `${scoreline} on the nose · +${total(top)}`,
+          severity: severity('exact', { points: total(top) }),
+        }),
+      )
+    } else {
+      moments.push(
+        make({
+          kind: 'exact',
+          actors: exacts.map((p) => p.profile),
+          points: total(top),
+          headline: `${exacts.length} called ${scoreline} exactly`,
+          subtext: `Eksakt for ${exacts.length} players`,
+          severity: severity('exact', { points: total(top) }) + 0.5,
+        }),
+      )
+    }
+  }
+
+  // 🧊 contrarian — a correct call almost nobody else made.
+  const contrarianPick = correct
+    .map((p) => ({ p, r: rarityOf(p, predictions, memberCount) }))
+    .filter(({ r }) => r.outcomePct < 10 || r.sameOutcomeCount <= 1)
+    .sort((a, b) => a.r.outcomePct - b.r.outcomePct || total(b.p) - total(a.p))
+    .find(({ p }) => !starred.has(p.userId))
+  if (contrarianPick) {
+    const { p, r } = contrarianPick
+    starred.add(p.userId)
+    moments.push(
+      make({
+        kind: 'contrarian',
+        actor: p.profile,
+        points: total(p),
+        rarity: r,
+        headline: `${p.profile.displayName} went against the grain`,
+        subtext:
+          r.sameOutcomeCount <= 1
+            ? `The only one to call it · +${total(p)}`
+            : `Just ${Math.round(r.outcomePct)}% backed it · +${total(p)}`,
+        severity: severity('contrarian', {
+          points: total(p),
+          outcomePct: r.outcomePct,
+        }),
+      }),
+    )
+  }
+
+  // 🔥 haul — the single biggest total, when it clears the threshold.
+  const topPred = predictions.reduce(
+    (b, p) => (total(p) > total(b) ? p : b),
+    predictions[0],
+  )
+  if (total(topPred) >= HAUL_THRESHOLD && !starred.has(topPred.userId)) {
+    starred.add(topPred.userId)
+    moments.push(
+      make({
+        kind: 'haul',
+        actor: topPred.profile,
+        points: total(topPred),
+        booster: topPred.booster ?? undefined,
+        headline: `${topPred.profile.displayName} banked +${total(topPred)}`,
+        subtext: topPred.booster
+          ? `Biggest haul · ${topPred.booster} booster`
+          : 'Biggest haul of the match',
+        severity: severity('haul', { points: total(topPred) }),
+      }),
+    )
+  }
+
+  // 🎲 booster — a multiplier gamble that paid off.
+  const boosterPick = predictions
+    .filter(
+      (p) => (p.points?.multiplier ?? 1) > 1 && total(p) >= BOOSTER_MIN_TOTAL,
+    )
+    .sort(
+      (a, b) =>
+        (b.points?.multiplier ?? 1) - (a.points?.multiplier ?? 1) ||
+        total(b) - total(a),
+    )
+    .find((p) => !starred.has(p.userId))
+  if (boosterPick) {
+    starred.add(boosterPick.userId)
+    moments.push(
+      make({
+        kind: 'booster',
+        actor: boosterPick.profile,
+        points: total(boosterPick),
+        booster: boosterPick.booster ?? undefined,
+        headline: `${boosterPick.profile.displayName}'s ${boosterPick.booster} paid off`,
+        subtext: `+${total(boosterPick)} with the multiplier`,
+        severity: severity('booster', { points: total(boosterPick) }),
+      }),
+    )
+  }
+
+  // 👥 collective — whole-league beats. Independent of the standouts above
+  // (no single actor), so an upset can sit alongside an exact/contrarian.
+  const predCount = predictions.length
+  if (correct.length === 0) {
+    moments.push(
+      make({
+        kind: 'collective',
+        headline: `Nobody saw ${scoreline} coming`,
+        subtext: `All ${predCount} picks missed`,
+        severity: severity('collective'),
+      }),
+    )
+  } else if (
+    memberCount >= 2 &&
+    predCount === memberCount &&
+    correct.length === predCount
+  ) {
+    moments.push(
+      make({
+        kind: 'collective',
+        actors: correct.map((p) => p.profile),
+        headline: 'Clean sweep — everyone called it',
+        subtext: `All ${memberCount} got the outcome`,
+        severity: severity('collective'),
+      }),
+    )
+  } else if (predCount >= 4 && correct.length / predCount <= UPSET_MAX_RATIO) {
+    moments.push(
+      make({
+        kind: 'collective',
+        headline: 'An upset few saw coming',
+        subtext: `Only ${correct.length} of ${predCount} called it`,
+        severity: severity('collective'),
+      }),
+    )
+  }
+
+  return moments.sort((a, b) => b.severity - a.severity)
+}
+
+export function pickHeadline(moments: Moment[]): Moment | null {
+  if (moments.length === 0) return null
+  return moments.reduce((best, m) => (m.severity > best.severity ? m : best))
+}
+
+/**
+ * Build one feed row for a (match, league): always-on overview + standouts.
+ * Returns null only when the match isn't finished — every finished match
+ * appears, even one nobody predicted (it yields an overview-only item), so the
+ * feed mirrors the full played-games history.
+ */
+export function toFeedItem(args: {
+  match: Match
+  predictions: PredictionWithDetails[]
+  memberCount: number
+  league: { id: UUID; name: string; icon: string | null }
+  viewerId?: UUID // when set, attaches that user's own result (Played feed)
+}): MomentFeedItem | null {
+  const { match, predictions, memberCount, league, viewerId } = args
+  if (match.status !== 'finished') return null
+  const overview = deriveMatchOverview({ match, predictions, memberCount })
+  const moments = deriveMatchMoments({ match, predictions, memberCount, league })
+
+  let viewer: MomentViewer | undefined
+  if (viewerId) {
+    const mine = predictions.find((p) => p.userId === viewerId)
+    const base = mine?.points?.base ?? 0
+    viewer = mine
+      ? {
+          status: base === 4 ? 'exact' : base === 1 ? 'outcome' : 'wrong',
+          homeScore: mine.homeScore,
+          awayScore: mine.awayScore,
+          points: mine.points?.total ?? 0,
+        }
+      : { status: 'none', homeScore: null, awayScore: null, points: 0 }
+  }
+
+  return {
+    matchId: match.id,
+    league,
+    match,
+    overview,
+    headline: pickHeadline(moments),
+    moments,
+    kickoffTime: match.kickoffTime,
+    viewer,
   }
 }
 

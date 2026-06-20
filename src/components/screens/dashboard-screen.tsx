@@ -20,9 +20,11 @@ import { cn } from '@/lib/utils'
 import { usePrediction } from '@/components/prediction-provider'
 import { ScreenHeader } from '@/components/screen-header'
 import { CreateOrJoinLeague } from '@/components/create-or-join-league'
+import { MomentCard } from '@/components/moment-card'
 import { HelpDialog } from '@/components/help-dialog'
 import { useDashboard } from '@/hooks/use-dashboard'
 import { useMyLeagues } from '@/hooks/use-my-leagues'
+import { useRecentMoments } from '@/hooks/use-recent-moments'
 import { useLiveMinute } from '@/hooks/use-live-minute'
 import { Avatar, Crest, teamName } from '@/components/match-ui'
 import { InviteFriendsModal } from '@/components/modals/invite-friends-modal'
@@ -76,6 +78,7 @@ export function DashboardScreen() {
                 onPredict={openPrediction}
               />
             ))}
+            <RecentMomentsSection />
             {completed.length > 0 && (
               <CompletedLeaguesSection completed={completed} />
             )}
@@ -83,6 +86,50 @@ export function DashboardScreen() {
         )}
       </div>
     </>
+  )
+}
+
+// Cross-league "what happened" feed: one story card per recent finished match
+// across all the user's leagues, each tagged with its league. Renders nothing
+// until it has something to show, so it never competes with the league cards.
+function RecentMomentsSection() {
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useRecentMoments(undefined, 5)
+  const items = data?.pages.flatMap((p) => p.items) ?? []
+
+  if (isLoading || items.length === 0) return null
+
+  return (
+    <div className="pt-1">
+      <div className="flex items-center gap-[10px] mb-3">
+        <span className="font-display text-[18px] font-extrabold uppercase tracking-[0.04em] text-foreground">
+          {'Recent moments'}
+        </span>
+        <span className="flex-1 h-px bg-border" />
+        <span className="font-mono text-[10px] uppercase tracking-[0.08em] font-semibold text-dim">
+          {'Across your leagues'}
+        </span>
+      </div>
+
+      {items.map((item) => (
+        <MomentCard
+          key={`${item.matchId}-${item.league.id}`}
+          item={item}
+          showLeagueTag
+        />
+      ))}
+
+      {hasNextPage && (
+        <button
+          type="button"
+          onClick={() => fetchNextPage()}
+          disabled={isFetchingNextPage}
+          className="w-full mt-3 py-2 text-xs font-semibold text-foreground hover:text-primary transition-colors disabled:opacity-50"
+        >
+          {isFetchingNextPage ? 'Loading…' : 'See more moments'}
+        </button>
+      )}
+    </div>
   )
 }
 

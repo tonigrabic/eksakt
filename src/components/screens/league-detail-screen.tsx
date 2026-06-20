@@ -17,6 +17,8 @@ import { usePrediction } from '@/components/prediction-provider'
 import { useLeagueDetail } from '@/hooks/use-league-detail'
 import { useRealtimeMatch } from '@/hooks/use-realtime-match'
 import { useLiveMinute } from '@/hooks/use-live-minute'
+import { useRecentMoments } from '@/hooks/use-recent-moments'
+import { MomentCard } from '@/components/moment-card'
 import { AnimatedScore } from '@/components/animated-score'
 import { InviteFriendsModal } from '@/components/modals/invite-friends-modal'
 import {
@@ -32,9 +34,7 @@ import {
 } from '@/components/match-ui'
 import { formatDayLabel } from '@/lib/format'
 import type {
-  CompletedMatchSummary,
   LiveMatchSummary,
-  Match,
   PredictionWithDetails,
   StandingRow,
   UpcomingMatchSummary,
@@ -274,7 +274,7 @@ export function LeagueDetailScreen({ leagueId }: Props) {
                 onPredict={openPrediction}
               />
             ) : (
-              <PlayedTab completed={completedMatches} leagueId={leagueId} />
+              <PlayedTab leagueId={leagueId} />
             )}
           </div>
         </div>
@@ -1104,235 +1104,56 @@ function UpcomingCard({
 
 // ── Played tab ───────────────────────────────────────────────────────────────
 
-// Played list is a flat feed of finished matches, most-recent first,
-// paginated by match count. Round names are kept as section headers
-// (inserted whenever the round changes within the visible slice).
-const PLAYED_INITIAL = 5
-const PLAYED_STEP = 5
+// Rolling feed of match "stories": one card per finished match, newest first,
+// each leading with the all-players overview and elevating a standout Moment
+// when there is one. Tapping a card opens the full match recap. Paginated via
+// the recent-moments infinite query.
+function PlayedTab({ leagueId }: { leagueId: UUID }) {
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useRecentMoments(leagueId)
+  const items = data?.pages.flatMap((p) => p.items) ?? []
 
-function PlayedTab({
-  completed,
-  leagueId,
-}: {
-  completed: CompletedMatchSummary[]
-  leagueId: UUID
-}) {
-  const sorted = useMemo(
-    () =>
-      [...completed].sort((a, b) =>
-        b.match.kickoffTime.localeCompare(a.match.kickoffTime),
-      ),
-    [completed],
-  )
-  const [visibleCount, setVisibleCount] = useState(PLAYED_INITIAL)
+  if (isLoading) {
+    return (
+      <p className="mt-4 text-center text-sm text-muted-foreground">
+        {'Loading…'}
+      </p>
+    )
+  }
 
-  if (completed.length === 0) {
+  if (items.length === 0) {
     return (
       <div className="mt-3 rounded-[12px] border border-border bg-card px-5 py-8 text-center">
         <p className="text-sm font-semibold text-foreground">
-          {'No results yet'}
+          {'No stories yet'}
         </p>
         <p className="text-xs text-muted-foreground mt-1">
-          {'Played matches will show up here once they finish.'}
+          {'Finished matches will show up here as moments.'}
         </p>
       </div>
     )
   }
 
-  const visible = sorted.slice(0, visibleCount)
-  const remaining = sorted.length - visible.length
-
-  // Bucket the visible slice into contiguous round groups for the pills.
-  const groups: { roundId: UUID; name: string; matches: CompletedMatchSummary[] }[] = []
-  for (const m of visible) {
-    const last = groups[groups.length - 1]
-    if (last && last.roundId === m.match.round.id) {
-      last.matches.push(m)
-    } else {
-      groups.push({
-        roundId: m.match.round.id,
-        name: m.match.round.name,
-        matches: [m],
-      })
-    }
-  }
-
   return (
-    <div>
-      {groups.map((g, i) => (
-        <div key={`${g.roundId}-${i}`}>
-          <DayStrip label={g.name} count={g.matches.length} />
-          {g.matches.map((m) => (
-            <PlayedCard key={m.match.id} summary={m} leagueId={leagueId} />
-          ))}
-        </div>
+    <div className="mt-3">
+      {items.map((item) => (
+        <MomentCard
+          key={`${item.matchId}-${item.league.id}`}
+          item={item}
+          showViewerResult
+        />
       ))}
 
-      {remaining > 0 && (
+      {hasNextPage && (
         <button
           type="button"
-          onClick={() => setVisibleCount((c) => c + PLAYED_STEP)}
-          className="w-full mt-3 py-2 text-xs font-semibold text-foreground hover:text-primary transition-colors"
+          onClick={() => fetchNextPage()}
+          disabled={isFetchingNextPage}
+          className="w-full mt-3 py-2 text-xs font-semibold text-foreground hover:text-primary transition-colors disabled:opacity-50"
         >
-          {`Load ${Math.min(PLAYED_STEP, remaining)} more `}
-          <span className="text-muted-foreground">({remaining} {'left'})</span>
-        </button>
-      )}
-
-      {visibleCount > PLAYED_INITIAL && (
-        <button
-          type="button"
-          onClick={() => setVisibleCount(PLAYED_INITIAL)}
-          className="w-full mt-1 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
-        >
-          {'Collapse'}
+          {isFetchingNextPage ? 'Loading…' : 'Load more'}
         </button>
       )}
     </div>
-  )
-}
-
-function resultStatus(
-  match: Match,
-  pred: CompletedMatchSummary['userPrediction'],
-): 'exact' | 'outcome' | 'wrong' | null {
-  if (!pred) return null
-  const hs = match.homeScore ?? 0
-  const as = match.awayScore ?? 0
-  if (pred.homeScore === hs && pred.awayScore === as) return 'exact'
-  if (Math.sign(pred.homeScore - pred.awayScore) === Math.sign(hs - as))
-    return 'outcome'
-  return 'wrong'
-}
-
-const PLAYED_RAIL = {
-  exact: 'bg-primary',
-  outcome: 'bg-foreground/35',
-  wrong: 'bg-destructive/50',
-  none: 'bg-transparent',
-} as const
-
-const PLAYED_TAG = {
-  exact: 'bg-primary text-background',
-  outcome: 'bg-secondary text-foreground',
-  wrong: 'bg-transparent border border-destructive text-destructive',
-} as const
-
-function PlayedCard({
-  summary,
-  leagueId,
-}: {
-  summary: CompletedMatchSummary
-  leagueId: UUID
-}) {
-  const { match, userPrediction } = summary
-  const hs = match.homeScore ?? 0
-  const as = match.awayScore ?? 0
-  const status = resultStatus(match, userPrediction)
-  const total = userPrediction?.points?.total ?? 0
-  const homeLost = hs < as
-  const awayLost = as < hs
-
-  const tagLabel =
-    status === 'exact'
-      ? 'Eksakt'
-      : status === 'outcome'
-        ? 'Outcome'
-        : status === 'wrong'
-          ? 'Missed'
-          : 'No pick'
-
-  return (
-    <Link
-      href={`/matches/${match.id}?league=${leagueId}`}
-      className="relative block overflow-hidden rounded-[12px] border border-border bg-card mb-[10px] hover:border-hair-strong transition-colors"
-    >
-      <span
-        className={cn(
-          'absolute left-0 top-0 bottom-0 w-[3px]',
-          PLAYED_RAIL[status ?? 'none'],
-        )}
-      />
-
-      <div className="flex justify-between items-center pt-[11px] pr-[14px] pl-4">
-        <span className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground">
-          {match.round.name} {'· Final'}
-        </span>
-        <span
-          className={cn(
-            'font-display text-[13px] font-black uppercase tracking-[0.1em] leading-none rounded-[4px] px-[9px] py-[3px]',
-            status ? PLAYED_TAG[status] : 'bg-secondary text-muted-foreground',
-          )}
-        >
-          {tagLabel}
-        </span>
-      </div>
-
-      <div className="grid grid-cols-[1fr_1px_auto] gap-[14px] items-center pt-3 pb-[14px] pr-[14px] pl-4">
-        <div className="flex flex-col gap-1 min-w-0">
-          <div
-            className={cn(
-              'flex items-center justify-between gap-[10px]',
-              homeLost && 'opacity-45',
-            )}
-          >
-            <span className="flex items-center gap-2 min-w-0 font-display text-[17px] font-bold uppercase tracking-[0.005em]">
-              <Crest team={match.homeTeam} size="xs" />
-              <span className="truncate">{teamName(match.homeTeam)}</span>
-            </span>
-            <span className="font-display text-[22px] font-extrabold tracking-[-0.03em] leading-none">
-              {hs}
-            </span>
-          </div>
-          <div
-            className={cn(
-              'flex items-center justify-between gap-[10px]',
-              awayLost && 'opacity-45',
-            )}
-          >
-            <span className="flex items-center gap-2 min-w-0 font-display text-[17px] font-bold uppercase tracking-[0.005em]">
-              <Crest team={match.awayTeam} size="xs" />
-              <span className="truncate">{teamName(match.awayTeam)}</span>
-            </span>
-            <span className="font-display text-[22px] font-extrabold tracking-[-0.03em] leading-none">
-              {as}
-            </span>
-          </div>
-        </div>
-
-        <span className="bg-border h-[48px] w-px" />
-
-        <div className="flex flex-col items-end gap-[2px] min-w-[70px]">
-          <span className="text-[9px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground">
-            {'You'}
-          </span>
-          {userPrediction ? (
-            <>
-              <span className="font-mono text-[11px] font-bold text-muted-foreground">
-                {userPrediction.homeScore}
-                {'–'}
-                {userPrediction.awayScore}
-              </span>
-              <span
-                className={cn(
-                  'font-display text-[34px] font-black leading-[0.85] tracking-[-0.04em] mt-0.5',
-                  total >= 5
-                    ? 'text-primary'
-                    : total >= 1
-                      ? 'text-foreground'
-                      : 'text-dim',
-                )}
-              >
-                {total > 0 ? `+${total}` : '0'}
-              </span>
-            </>
-          ) : (
-            <span className="font-display text-[34px] font-black text-dim leading-[0.85] mt-0.5">
-              {'—'}
-            </span>
-          )}
-        </div>
-      </div>
-    </Link>
   )
 }

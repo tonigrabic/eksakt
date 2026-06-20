@@ -13,12 +13,18 @@ import {
 } from '@/types'
 
 type Score = { home: number; away: number }
-type Outcome = 'home' | 'draw' | 'away'
+export type Outcome = 'home' | 'draw' | 'away'
+
+// Exported so other pure layers (derive.ts moments/overview) classify
+// W/D/L exactly the way the scoring engine does.
+export function resultOutcome(home: number, away: number): Outcome {
+  if (home > away) return 'home'
+  if (home < away) return 'away'
+  return 'draw'
+}
 
 function outcome(s: Score): Outcome {
-  if (s.home > s.away) return 'home'
-  if (s.home < s.away) return 'away'
-  return 'draw'
+  return resultOutcome(s.home, s.away)
 }
 
 // Outcome-rarity bonus.

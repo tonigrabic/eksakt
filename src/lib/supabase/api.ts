@@ -21,9 +21,10 @@ import {
   isLeagueFinished,
   isUpcomingPredictable,
   liveMatchSummary,
+  toDetailedPrediction,
+  toFeedItem,
   upcomingMatchSummary,
 } from '@/lib/derive'
-import { computePoints, computeRarity } from '@/lib/scoring'
 import type {
   AddLeagueCompetitionInput,
   BoosterCounts,
@@ -38,12 +39,14 @@ import type {
   LeaguePredictionContext,
   Match,
   MatchDetailPayload,
+  MomentFeedItem,
   MyLeagueCard,
   MyLeaguesPayload,
   Prediction,
   PredictionContextPayload,
   Profile,
   QuickPredictInput,
+  RecentMomentsPage,
   RemoveLeagueMemberInput,
   StandingRow,
   SubmitPredictionInput,
@@ -504,47 +507,181 @@ export async function getMatchDetail(
     ),
   })
 
-  const isLocked = match.status !== 'scheduled'
   const memberCount = members.length
 
-  // For finished matches, the persisted `storedPoints` row is server-
-  // authoritative (canonical rarity, audit fields). For live matches we
-  // must always recompute — stale `points` rows can linger if a match
-  // was previously finished and then re-opened (manual sync, upstream
-  // correction), and trusting them would show points against a previous
-  // final score instead of the current live one.
-  const detailedWithPoints = predictions.map((p) => ({
-    ...p,
-    profile:
-      profileById.get(p.userId) ??
-      ({ id: p.userId, displayName: '?', avatarUrl: null } as Profile),
-    points:
-      !isLocked || match.homeScore == null || match.awayScore == null
-        ? null
-        : match.status === 'finished' && p.storedPoints
-          ? p.storedPoints
-          : computePoints({
-              prediction: {
-                homeScore: p.homeScore,
-                awayScore: p.awayScore,
-                booster: p.booster,
-              },
-              finalScore: { home: match.homeScore, away: match.awayScore },
-              rarity: computeRarity(p, predictions, memberCount),
-              final: match.status === 'finished',
-            }),
-  }))
+  // toDetailedPrediction resolves points the canonical way: persisted
+  // `storedPoints` for finished matches (server-authoritative rarity + audit
+  // fields), recompute for live, null for scheduled.
+  const detailedWithPoints = predictions.map((p) =>
+    toDetailedPrediction(p, match, predictions, profileById, memberCount),
+  )
 
   const userPredDetailed =
     detailedWithPoints.find((p) => p.userId === userId) ?? null
 
   return {
     match,
-    league: { id: league.id, name: league.name },
+    league: { id: league.id, name: league.name, icon: league.icon },
     predictions: detailedWithPoints,
     userPrediction: userPredDetailed,
     standings,
+    memberCount,
   }
+}
+
+// ── Recent moments (match-story feed) ───────────────────────────────────────
+
+/**
+ * Rolling feed of match "stories", newest-first. Cross-league when `leagueId`
+ * is omitted (union of the user's leagues, each item tagged with its league);
+ * single-league when given. Paginated by a kickoff_time cursor for load-more.
+ *
+ * Batched to avoid N+1: leagues + rosters up front, finished matches via the
+ * league-matches chokepoint, then ALL predictions for the windowed matches in
+ * one query. Feed items (overview + standout moments) are assembled in pure TS.
+ */
+export async function getRecentMoments(args: {
+  leagueId?: UUID
+  limit: number
+  cursor?: string
+}): Promise<RecentMomentsPage> {
+  const { leagueId, limit, cursor } = args
+  const { id: userId } = await requireUser()
+  const supabase = createClient()
+
+  // 1. Target leagues ({id,name,icon}) + member rosters.
+  type LeagueLite = { id: UUID; name: string; icon: string | null }
+  const leaguesById = new Map<UUID, LeagueLite>()
+  const membersByLeague = new Map<UUID, LeagueMember[]>()
+
+  if (leagueId) {
+    const { league, members } = await fetchLeagueWithCounts(leagueId)
+    leaguesById.set(league.id, {
+      id: league.id,
+      name: league.name,
+      icon: league.icon,
+    })
+    membersByLeague.set(league.id, members)
+  } else {
+    const { data: leagueRows, error: lErr } = await supabase
+      .from('league_members')
+      .select(`league:leagues(${LEAGUE_SELECT})`)
+      .eq('user_id', userId)
+    if (lErr) throw lErr
+    const myLeagueIds: UUID[] = []
+    for (const row of leagueRows ?? []) {
+      const lr = row.league as unknown as Parameters<typeof rowToLeague>[0]
+      if (!lr) continue
+      const lg = rowToLeague(lr, 0) // memberCount unused here; rosters drive it
+      leaguesById.set(lg.id, { id: lg.id, name: lg.name, icon: lg.icon })
+      myLeagueIds.push(lg.id)
+    }
+    if (myLeagueIds.length === 0) return { items: [], nextCursor: null }
+
+    const { data: rosterRows, error: rErr } = await supabase
+      .from('league_members')
+      .select('*, profile:profiles(*)')
+      .in('league_id', myLeagueIds)
+    if (rErr) throw rErr
+    for (const row of rosterRows ?? []) {
+      const m = rowToLeagueMember(
+        row as Parameters<typeof rowToLeagueMember>[0],
+      )
+      const arr = membersByLeague.get(m.leagueId) ?? []
+      arr.push(m)
+      membersByLeague.set(m.leagueId, arr)
+    }
+  }
+
+  // 2. Finished matches per league (reuse the league-matches chokepoint),
+  //    cursor-filtered, tagged with their league, newest-first overall.
+  //    The cursor is a composite key (kickoff#match#league) giving a strict
+  //    total order, so paging back never skips matches that share a kickoff
+  //    time — common in tournaments where several games start at once.
+  const keyOf = (kickoff: string, matchId: string, lid: string) =>
+    `${kickoff}#${matchId}#${lid}`
+  type Tagged = { match: Match; leagueId: UUID; key: string }
+  const finished: Tagged[] = []
+  await Promise.all(
+    [...leaguesById.keys()].map(async (lid) => {
+      const matches = await fetchMatchesForLeague(lid)
+      for (const m of matches) {
+        if (m.status !== 'finished') continue
+        const key = keyOf(m.kickoffTime, m.id, lid)
+        if (cursor && !(key < cursor)) continue
+        finished.push({ match: m, leagueId: lid, key })
+      }
+    }),
+  )
+  // Strict descending key order (kickoff, then match, then league).
+  finished.sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0))
+  if (finished.length === 0) return { items: [], nextCursor: null }
+
+  // Scan a window larger than `limit` so storyless matches (nobody predicted)
+  // don't starve the page. We slice to `limit` after assembly.
+  const window = finished.slice(0, limit * 3)
+
+  // 3. All predictions for the windowed (match,league) pairs in ONE query.
+  const matchIds = [...new Set(window.map((t) => t.match.id))]
+  const leagueIds = [...new Set(window.map((t) => t.leagueId))]
+  const { data: predRows, error: pErr } = await supabase
+    .from('predictions')
+    .select(PREDICTION_SELECT)
+    .in('match_id', matchIds)
+    .in('league_id', leagueIds)
+  if (pErr) throw pErr
+  const predsByKey = new Map<string, Prediction[]>()
+  for (const row of predRows ?? []) {
+    const p = rowToPrediction(row as Parameters<typeof rowToPrediction>[0])
+    const key = `${p.matchId}::${p.leagueId}`
+    const arr = predsByKey.get(key) ?? []
+    arr.push(p)
+    predsByKey.set(key, arr)
+  }
+
+  // 4. Assemble feed items (overview + standouts) for each windowed pair.
+  const items: MomentFeedItem[] = []
+  for (const { match, leagueId: lid } of window) {
+    const league = leaguesById.get(lid)
+    if (!league) continue
+    const members = membersByLeague.get(lid) ?? []
+    const profileById = new Map(members.map((m) => [m.userId, m.profile]))
+    const raw = predsByKey.get(`${match.id}::${lid}`) ?? []
+    const detailed = raw.map((p) =>
+      toDetailedPrediction(p, match, raw, profileById, members.length),
+    )
+    const item = toFeedItem({
+      match,
+      predictions: detailed,
+      memberCount: members.length,
+      league,
+      viewerId: userId,
+    })
+    if (item) items.push(item)
+  }
+
+  // Keep the strict key order (matches the cursor) so paging back covers the
+  // whole history without skips or repeats.
+  const itemKey = (it: MomentFeedItem) =>
+    keyOf(it.kickoffTime, it.matchId, it.league.id)
+  items.sort((a, b) => {
+    const ak = itemKey(a)
+    const bk = itemKey(b)
+    return ak < bk ? 1 : ak > bk ? -1 : 0
+  })
+  const page = items.slice(0, limit)
+
+  // Cursor: a full page continues from the last story's key. If the window ran
+  // dry without filling the page but more finished matches exist beyond it,
+  // continue from the window's oldest match so the tail isn't lost. Otherwise
+  // we've reached the end of history.
+  let nextCursor: string | null = null
+  if (page.length === limit) {
+    nextCursor = itemKey(page[page.length - 1])
+  } else if (window.length < finished.length) {
+    nextCursor = window[window.length - 1].key
+  }
+  return { items: page, nextCursor }
 }
 
 // ── Prediction context (modal) ──────────────────────────────────────────────

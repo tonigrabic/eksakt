@@ -16,6 +16,8 @@ import {
   Crest,
   teamName,
 } from '@/components/match-ui'
+import { MomentRow, OverviewStrip } from '@/components/moment-card'
+import { deriveMatchMoments, deriveMatchOverview } from '@/lib/derive'
 import type {
   PredictionWithDetails,
   StandingRow,
@@ -59,7 +61,8 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
     )
   }
 
-  const { match, league, predictions, userPrediction, standings } = data
+  const { match, league, predictions, userPrediction, standings, memberCount } =
+    data
   const sortedPreds = [...predictions].sort(
     (a, b) =>
       (b.points?.total ?? 0) - (a.points?.total ?? 0) ||
@@ -68,6 +71,15 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
 
   const isLive = match.status === 'live'
   const isFinished = match.status === 'finished'
+
+  // "The Story" — finished-only. Derived client-side from the data useMatch
+  // already returns (no extra fetch): the always-on overview + standout moments.
+  const overview = isFinished
+    ? deriveMatchOverview({ match, predictions, memberCount })
+    : null
+  const moments = isFinished
+    ? deriveMatchMoments({ match, predictions, memberCount, league })
+    : []
 
   return (
     <div className="min-h-screen bg-background pb-8 tabular-nums">
@@ -152,6 +164,29 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
           )}
         </div>
       </div>
+
+      {/* ── The Story (finished + someone predicted) ───────────────────── */}
+      {isFinished && overview && overview.predictionCount > 0 && (
+        <div className="max-w-2xl mx-auto px-4 pt-[22px]">
+          <SectionHead
+            title="The Story"
+            meta={
+              moments.length > 0
+                ? `${moments.length} ${moments.length === 1 ? 'moment' : 'moments'}`
+                : undefined
+            }
+          />
+          <div className="overflow-hidden rounded-[12px] border border-border bg-card">
+            <OverviewStrip
+              overview={overview}
+              className={moments.length > 0 ? 'border-b border-border' : undefined}
+            />
+            {moments.map((m, i) => (
+              <MomentRow key={`${m.kind}-${i}`} moment={m} />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="max-w-2xl mx-auto px-4">
         {/* Tabs */}

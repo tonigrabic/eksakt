@@ -285,10 +285,101 @@ export type RemoveLeagueMemberInput = {
 
 export type MatchDetailPayload = {
   match: Match
-  league: Pick<League, 'id' | 'name'>
+  league: Pick<League, 'id' | 'name' | 'icon'>
   predictions: PredictionWithDetails[] // empty array pre-kickoff
   userPrediction: PredictionWithDetails | null
   standings: StandingRow[] // live standings reflecting current scores
+  // League member count — rarity denominator + the "X of N predicted"
+  // overview line. Already known server-side; surfaced so the match screen
+  // can derive Moments client-side without a second fetch.
+  memberCount: number
+}
+
+// ── Moments (match stories) ──────────────────────────────────────────────────
+
+// A derived highlight from a finished match within a league. A match can
+// produce several; the highest-`severity` one is its headline.
+export type MomentKind =
+  | 'exact' // someone nailed the exact score
+  | 'haul' // a big single-match points total
+  | 'contrarian' // a correct call almost nobody else made
+  | 'booster' // a booster gamble that paid off
+  | 'collective' // whole-league beat (everyone missed / clean sweep)
+  | 'mover' // standings jump driven by this match (reserved — see derive.ts)
+
+export type MomentRarity = {
+  sameOutcomeCount: number
+  memberCount: number
+  outcomePct: number
+}
+
+export type Moment = {
+  kind: MomentKind
+  matchId: UUID
+  league: { id: UUID; name: string; icon: string | null }
+  match: Match // finished, with teams + final score
+  actor?: Profile // single player the moment is about
+  actors?: Profile[] // multiple players (e.g. several exact hits)
+  points?: number
+  booster?: Booster
+  rarity?: MomentRarity
+  headline: string
+  subtext?: string
+  severity: number // ranks moments within a match (headline) + feed tiebreak
+}
+
+// Always-present league roll-up for a finished match — the "what happened
+// for all players" floor every match gets, even with no standout Moment.
+export type MatchOverview = {
+  memberCount: number
+  predictionCount: number
+  homeCount: number // predicted a home win
+  drawCount: number
+  awayCount: number
+  correctCount: number // got the outcome right (base >= 1)
+  exactCount: number // nailed the exact score (base === 4)
+  topPoints: number
+  topScorer: Profile | null
+  // The league's majority pick + the team it names (drives "15 backed
+  // Brazil"). `team` is null for a draw consensus; whole field null when
+  // nobody predicted.
+  consensus: {
+    side: 'home' | 'draw' | 'away'
+    team: Team | null
+    count: number
+  } | null
+}
+
+// The viewing user's own result for a match — powers the "you scored" strip on
+// the league Played feed (deliberately not shown on the cross-league dashboard,
+// where the viewer's row isn't the point). `none` = member didn't predict.
+export type MomentViewer = {
+  status: 'exact' | 'outcome' | 'wrong' | 'none'
+  homeScore: number | null
+  awayScore: number | null
+  points: number
+}
+
+// One feed row: a match's always-on overview + its standout moments.
+// `headline` is null when the match produced no standout — the card then
+// leads with the overview itself.
+export type MomentFeedItem = {
+  matchId: UUID
+  league: { id: UUID; name: string; icon: string | null }
+  match: Match
+  overview: MatchOverview
+  headline: Moment | null
+  moments: Moment[] // severity-desc; may be empty
+  kickoffTime: ISODateTime
+  viewer?: MomentViewer // populated when a viewerId is supplied to toFeedItem
+}
+
+export type RecentMomentsPage = {
+  items: MomentFeedItem[]
+  // Opaque composite cursor (kickoff#match#league) of the last item; null when
+  // the whole history has been paged through. Composite so simultaneous
+  // kickoffs (tournaments) are never skipped at a page boundary.
+  nextCursor: string | null
 }
 
 // ── Prediction modal context ─────────────────────────────────────────────────
