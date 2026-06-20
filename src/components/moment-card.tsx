@@ -58,6 +58,28 @@ function overviewHeadline(o: MatchOverview): string {
   return `${count} of ${o.predictionCount} backed ${label}`
 }
 
+function matchOutcome(hs: number, as: number): 'home' | 'draw' | 'away' {
+  if (hs > as) return 'home'
+  if (hs < as) return 'away'
+  return 'draw'
+}
+
+// One-line read on how the room did — the consensus measured against the actual
+// result. Null only when nobody predicted (the crowd strip is then hidden).
+function crowdVerdict(o: MatchOverview, hs: number, as: number): string | null {
+  if (o.predictionCount === 0) return null
+  if (o.correctCount === 0) return 'Nobody saw it coming'
+  if (o.predictionCount >= 2 && o.correctCount === o.predictionCount) {
+    return 'Everyone called it'
+  }
+  if (o.consensus) {
+    return o.consensus.side === matchOutcome(hs, as)
+      ? 'Crowd called it'
+      : 'Crowd got it wrong'
+  }
+  return null
+}
+
 function GlyphChip({
   glyph,
   chip,
@@ -293,15 +315,47 @@ export function MomentCard({
   const as = match.awayScore ?? 0
 
   const v = headline ? visualFor(headline) : OVERVIEW_VISUAL
-  const headlineText = headline ? headline.headline : overviewHeadline(overview)
-  const subtext = headline?.subtext
   const actors = headline?.actors ?? (headline?.actor ? [headline.actor] : [])
-  const hasContext = actors.length > 0 || Boolean(subtext)
+  // A "person" story is a standout someone owns (vs a whole-league collective).
+  const isPerson = Boolean(headline && headline.kind !== 'collective' && actors.length > 0)
+
+  const verdict = crowdVerdict(overview, hs, as)
+  // Story line: the person's standout when there is one, else the crowd verdict.
+  const storyText = isPerson
+    ? headline!.headline
+    : (verdict ?? overviewHeadline(overview))
+  const storyPoints = isPerson ? headline!.points : undefined
+
+  // Crowd strip — who won the match + how many nailed it. Suppress the top haul
+  // when it's the same player the story line already features (no echo).
+  const topScorer = overview.topScorer
+  const showHaul =
+    topScorer != null &&
+    overview.topPoints > 0 &&
+    !(isPerson && topScorer.id === actors[0]?.id)
+  const crowdStats = [
+    showHaul ? `${topScorer!.displayName} +${overview.topPoints}` : null,
+    overview.exactCount > 0 ? `${overview.exactCount} Eksakt` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  // Left of the bar: the verdict (when the story is a person) else participation
+  // — so the verdict shows exactly once.
+  const crowdLead = isPerson ? verdict : `${overview.predictionCount} played`
 
   // On the Played feed the rail reflects YOUR result; on the dashboard it
   // reflects the headline story's kind.
   const rail =
     showViewerResult && item.viewer ? VIEWER_RAIL[item.viewer.status] : v.rail
+
+  const splitTotal = Math.max(
+    1,
+    overview.homeCount + overview.drawCount + overview.awayCount,
+  )
+  const seg = (n: number, cls: string) =>
+    n > 0 ? (
+      <span className={cls} style={{ width: `${(n / splitTotal) * 100}%` }} />
+    ) : null
 
   return (
     <Link
@@ -310,61 +364,60 @@ export function MomentCard({
     >
       <span className={cn('absolute left-0 top-0 bottom-0 w-[3px]', rail)} />
 
-      {/* header: the story sentence leads (glyph + headline), league tag right */}
-      <div className="flex items-start justify-between gap-2 pt-[11px] pr-[14px] pl-4">
-        <span className="flex min-w-0 items-start gap-2">
+      {/* header: the fixture leads — glyph + flags + abbreviations + score */}
+      <div className="flex items-center justify-between gap-2 pt-[11px] pr-[14px] pl-4">
+        <span className="flex min-w-0 items-center gap-2">
           <GlyphChip
             glyph={v.glyph}
             chip={v.chip}
-            className="mt-px size-[22px] shrink-0 text-[12px]"
+            className="size-[22px] shrink-0 text-[12px]"
           />
-          <span className="line-clamp-2 font-display text-[16px] font-extrabold uppercase leading-[1.08] tracking-[0.005em]">
-            {headlineText}
-          </span>
+          <ScoreLine
+            home={match.homeTeam}
+            away={match.awayTeam}
+            homeScore={hs}
+            awayScore={as}
+          />
         </span>
         {showLeagueTag && <MomentLeagueTag league={league} />}
       </div>
 
-      {/* body: player / subtext (left) · flags + abbreviations + score (right) */}
-      <div className="flex items-center justify-between gap-[14px] pt-2 pb-3 pr-[14px] pl-4">
-        {hasContext ? (
-          <div className="flex min-w-0 flex-col gap-1">
-            {subtext && (
-              <span className="truncate text-[12px] leading-snug text-muted-foreground">
-                {subtext}
-              </span>
-            )}
-            {actors.length > 0 && (
-              <span className="flex min-w-0 items-center gap-2">
-                {actors.length === 1 ? (
-                  <>
-                    <Avatar profile={actors[0]} size="sm" />
-                    <span className="truncate text-[13px] font-medium">
-                      {actors[0].displayName}
-                    </span>
-                  </>
-                ) : (
-                  <MomentActors actors={actors} />
-                )}
-                {headline?.booster && <BoosterPill booster={headline.booster} />}
-              </span>
-            )}
-          </div>
-        ) : (
-          <span />
+      {/* story: who starred (a person) or the crowd verdict */}
+      <div className="flex items-center gap-2 pt-2 pr-[14px] pl-4">
+        {isPerson && actors.length === 1 && (
+          <Avatar profile={actors[0]} size="sm" />
         )}
-
-        <ScoreLine
-          home={match.homeTeam}
-          away={match.awayTeam}
-          homeScore={hs}
-          awayScore={as}
-        />
+        {isPerson && actors.length > 1 && <MomentActors actors={actors} />}
+        <span className="min-w-0 flex-1 truncate font-display text-[15px] font-extrabold uppercase leading-tight tracking-[0.005em]">
+          {storyText}
+        </span>
+        {headline?.booster && <BoosterPill booster={headline.booster} />}
+        {typeof storyPoints === 'number' && storyPoints > 0 && (
+          <span className="shrink-0 font-display text-[18px] font-black leading-none tracking-[-0.02em] text-primary">
+            {'+'}
+            {storyPoints}
+          </span>
+        )}
       </div>
 
+      {/* crowd: verdict / participation + who won + exacts, over the split bar */}
       {overview.predictionCount > 0 && (
-        <OverviewStrip overview={overview} className="border-t border-border" />
+        <div className="px-4 pt-2.5 pb-2.5">
+          <div className="mb-1.5 flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-[0.06em]">
+            <span className="truncate text-muted-foreground">{crowdLead}</span>
+            {crowdStats && <span className="shrink-0 text-dim">{crowdStats}</span>}
+          </div>
+          <span
+            className="flex h-[5px] overflow-hidden rounded-full bg-secondary"
+            title={`${overview.homeCount} home · ${overview.drawCount} draw · ${overview.awayCount} away`}
+          >
+            {seg(overview.homeCount, 'bg-primary/55')}
+            {seg(overview.drawCount, 'bg-muted-foreground/40')}
+            {seg(overview.awayCount, 'bg-info/55')}
+          </span>
+        </div>
       )}
+
       {showViewerResult && item.viewer && (
         <ViewerResultStrip viewer={item.viewer} />
       )}
