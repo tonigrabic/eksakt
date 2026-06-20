@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, ChevronDown, Star, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -17,7 +17,17 @@ import {
   teamName,
 } from '@/components/match-ui'
 import { MomentRow, OverviewStrip } from '@/components/moment-card'
-import { deriveMatchMoments, deriveMatchOverview } from '@/lib/derive'
+import {
+  LiveHeadline,
+  PredictionBoard,
+  ScenariosSection,
+} from '@/components/match-scenarios'
+import {
+  deriveMatchMoments,
+  deriveMatchOverview,
+  derivePredictionGroups,
+  deriveScenarios,
+} from '@/lib/derive'
 import type {
   PredictionWithDetails,
   StandingRow,
@@ -52,6 +62,27 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
     data?.match.status,
     data?.match.kickoffTime,
   )
+
+  // Live-only "Who picked what" board + outcome scenarios. Recomputed whenever
+  // the match payload changes — so every goal re-scores the picks and refreshes
+  // the "if it stays …" headline. The scenarios run the scorer ≤4× over every
+  // pick, hence the memo. Declared before the loading guard to keep Hook order
+  // stable.
+  const liveBoard = useMemo(() => {
+    if (!data || data.match.status !== 'live' || data.predictions.length === 0) {
+      return null
+    }
+    const { match, predictions, memberCount, league } = data
+    const scenarios = deriveScenarios({ match, predictions, memberCount, league })
+    return {
+      overview: deriveMatchOverview({ match, predictions, memberCount }),
+      groups: derivePredictionGroups({ match, predictions }),
+      // The current-score story is elevated as the live headline; the rest are
+      // the what-if alternatives.
+      current: scenarios.find((s) => s.isCurrent) ?? null,
+      whatIfs: scenarios.filter((s) => !s.isCurrent),
+    }
+  }, [data])
 
   if (isLoading || !data) {
     return (
@@ -185,6 +216,30 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
               <MomentRow key={`${m.kind}-${i}`} moment={m} />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* ── Live board + scenarios (live + someone predicted) ───────────── */}
+      {isLive && liveBoard && (
+        <div className="max-w-2xl mx-auto px-4 pt-[22px]">
+          {liveBoard.current && <LiveHeadline scenario={liveBoard.current} />}
+
+          <SectionHead
+            title="Who picked what"
+            meta={`${predictions.length} ${predictions.length === 1 ? 'pick' : 'picks'}`}
+            live
+          />
+          <PredictionBoard groups={liveBoard.groups} overview={liveBoard.overview} />
+
+          {liveBoard.whatIfs.length > 0 && (
+            <div className="pt-[22px]">
+              <SectionHead
+                title="How it could go"
+                meta={`${liveBoard.whatIfs.length} ${liveBoard.whatIfs.length === 1 ? 'scenario' : 'scenarios'}`}
+              />
+              <ScenariosSection scenarios={liveBoard.whatIfs} />
+            </div>
+          )}
         </div>
       )}
 

@@ -382,6 +382,39 @@ export type RecentMomentsPage = {
   nextCursor: string | null
 }
 
+// ── Live-match board + scenarios ──────────────────────────────────────────────
+//
+// Derived purely from the visible picks of a live match (peers' predictions
+// unlock at kickoff). The board groups "who picked what"; scenarios run those
+// same picks through the real scorer against a few plausible final scores.
+
+// One distinct scoreline within an outcome group + who backed it.
+export type ScoreSlice = {
+  homeScore: number
+  awayScore: number
+  players: Profile[]
+  // Modal booster among the backers (for the pill); null when nobody boosted.
+  booster: Booster | null
+}
+
+// All picks for one outcome side, broken down by exact scoreline.
+export type PredictionGroup = {
+  side: 'home' | 'draw' | 'away'
+  team: Team | null // null for a draw
+  count: number
+  scorelines: ScoreSlice[] // backer count desc
+}
+
+// A "what-if" final score, with the league story it would produce. `overview`'s
+// correct/exact/top fields are recomputed against this hypothetical result.
+export type MatchScenario = {
+  finalScore: { home: number; away: number }
+  side: 'home' | 'draw' | 'away'
+  isCurrent: boolean // matches the current live score ("if it stays …")
+  overview: MatchOverview
+  headline: Moment | null // the lead story under this outcome
+}
+
 // ── Prediction modal context ─────────────────────────────────────────────────
 
 export type LeaguePredictionContext = {
