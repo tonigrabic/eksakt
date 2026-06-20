@@ -411,8 +411,21 @@ export type MatchScenario = {
   finalScore: { home: number; away: number }
   side: 'home' | 'draw' | 'away'
   isCurrent: boolean // matches the current live score ("if it stays …")
+  // Set for next-goal scenarios: which team's goal produces this scoreline
+  // (drives the "If <team> scores" framing). Undefined for plain what-ifs.
+  scorer?: 'home' | 'away'
+  // Set for next-goal scenarios: who'd nail this exact scoreline — the players
+  // "in for the big points" — with their projected total, biggest-first.
+  winners?: NextGoalWinner[]
   overview: MatchOverview
   headline: Moment | null // the lead story under this outcome
+}
+
+// One player who'd cash in big under a next-goal scoreline.
+export type NextGoalWinner = {
+  profile: Profile
+  points: number // projected total if this scoreline happens
+  booster: Booster | null
 }
 
 // ── Prediction modal context ─────────────────────────────────────────────────

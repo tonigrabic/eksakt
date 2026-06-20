@@ -17,16 +17,12 @@ import {
   teamName,
 } from '@/components/match-ui'
 import { MomentRow, OverviewStrip } from '@/components/moment-card'
-import {
-  LiveHeadline,
-  PredictionBoard,
-  ScenariosSection,
-} from '@/components/match-scenarios'
+import { NextGoalScenarios, PredictionBoard } from '@/components/match-scenarios'
 import {
   deriveMatchMoments,
   deriveMatchOverview,
+  deriveNextGoalScenarios,
   derivePredictionGroups,
-  deriveScenarios,
 } from '@/lib/derive'
 import type {
   PredictionWithDetails,
@@ -63,24 +59,19 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
     data?.match.kickoffTime,
   )
 
-  // Live-only "Who picked what" board + outcome scenarios. Recomputed whenever
+  // Live-only "Who picked what" board + next-goal scenarios. Recomputed whenever
   // the match payload changes — so every goal re-scores the picks and refreshes
-  // the "if it stays …" headline. The scenarios run the scorer ≤4× over every
-  // pick, hence the memo. Declared before the loading guard to keep Hook order
-  // stable.
+  // who's in line for the big points. Declared before the loading guard to keep
+  // Hook order stable.
   const liveBoard = useMemo(() => {
     if (!data || data.match.status !== 'live' || data.predictions.length === 0) {
       return null
     }
     const { match, predictions, memberCount, league } = data
-    const scenarios = deriveScenarios({ match, predictions, memberCount, league })
     return {
       overview: deriveMatchOverview({ match, predictions, memberCount }),
       groups: derivePredictionGroups({ match, predictions }),
-      // The current-score story is elevated as the live headline; the rest are
-      // the what-if alternatives.
-      current: scenarios.find((s) => s.isCurrent) ?? null,
-      whatIfs: scenarios.filter((s) => !s.isCurrent),
+      nextGoals: deriveNextGoalScenarios({ match, predictions, memberCount, league }),
     }
   }, [data])
 
@@ -219,10 +210,15 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
         </div>
       )}
 
-      {/* ── Live board + scenarios (live + someone predicted) ───────────── */}
+      {/* ── Live board + next-goal scenarios (live + someone predicted) ── */}
       {isLive && liveBoard && (
         <div className="max-w-2xl mx-auto px-4 pt-[22px]">
-          {liveBoard.current && <LiveHeadline scenario={liveBoard.current} />}
+          {liveBoard.nextGoals.length > 0 && (
+            <div className="pb-[22px]">
+              <SectionHead title="If a goal goes in" meta="Next goal" live />
+              <NextGoalScenarios scenarios={liveBoard.nextGoals} match={match} />
+            </div>
+          )}
 
           <SectionHead
             title="Who picked what"
@@ -230,16 +226,6 @@ export function LiveMatchScreen({ matchId, leagueId }: Props) {
             live
           />
           <PredictionBoard groups={liveBoard.groups} overview={liveBoard.overview} />
-
-          {liveBoard.whatIfs.length > 0 && (
-            <div className="pt-[22px]">
-              <SectionHead
-                title="How it could go"
-                meta={`${liveBoard.whatIfs.length} ${liveBoard.whatIfs.length === 1 ? 'scenario' : 'scenarios'}`}
-              />
-              <ScenariosSection scenarios={liveBoard.whatIfs} />
-            </div>
-          )}
         </div>
       )}
 

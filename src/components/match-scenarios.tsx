@@ -1,10 +1,10 @@
 'use client'
 
 // Live-match "Stadium Broadcast" extras. While a match is undecided we can show
-// two things the finished "The Story" can't: the PredictionBoard (who picked
-// what, grouped by outcome then scoreline) and ScenariosSection (a few
-// plausible final scores run through the real scorer, each with the league
-// story it would produce). Pure presentation over the derivations in derive.ts.
+// two things the live table can't: the PredictionBoard (who picked what, grouped
+// by outcome then scoreline) and NextGoalScenarios (who's in for the big points
+// and what needs to happen — the next-goal results run through the real scorer).
+// Pure presentation over the derivations in derive.ts.
 
 import { cn } from '@/lib/utils'
 import {
@@ -15,21 +15,12 @@ import {
 } from '@/components/match-ui'
 import { OverviewStrip } from '@/components/moment-card'
 import type {
+  Match,
   MatchOverview,
   MatchScenario,
-  MomentKind,
   PredictionGroup,
   Profile,
 } from '@/types'
-
-const KIND_GLYPH: Record<MomentKind, string> = {
-  exact: '🎯',
-  haul: '🔥',
-  contrarian: '🧊',
-  booster: '🎲',
-  mover: '📈',
-  collective: '👥',
-}
 
 // Left-rail / accent per outcome side — mirrors the OverviewStrip split colours.
 const SIDE_RAIL: Record<'home' | 'draw' | 'away', string> = {
@@ -114,130 +105,111 @@ export function PredictionBoard({
   )
 }
 
-// ── Outcome scenarios ─────────────────────────────────────────────────────────
+// ── Next-goal scenarios ───────────────────────────────────────────────────────
+//
+// "Who's in for the big points and what needs to happen." Each card is one
+// next-goal result (a home goal / an away goal from the current score) and the
+// players who'd nail that exact scoreline — their projected total, boosters and
+// rarity included — biggest haul first.
 
-// A compact stat line from the projected overview: the lead scorer + the
-// correct/exact tallies under this hypothetical result.
-function scenarioStatLine(o: MatchOverview): string {
-  if (o.topPoints <= 0 || !o.topScorer) {
-    return o.predictionCount > 0 ? 'No points on the board' : 'No picks'
-  }
-  const bits = [`${o.topScorer.displayName} tops it +${o.topPoints}`]
-  if (o.exactCount > 0) bits.push(`${o.exactCount} Eksakt`)
-  bits.push(`${o.correctCount} correct`)
-  return bits.join(' · ')
+const SCORER_RAIL: Record<'home' | 'away', string> = {
+  home: 'bg-primary',
+  away: 'bg-info',
 }
 
-// The live story "as it stands" — the current-score scenario, elevated. Every
-// goal re-scores the picks, so this headline re-writes itself in real time
-// ("Nobody saw 0–0 coming" → "Sam's on for the Eksakt" the moment a goal lands).
-export function LiveHeadline({ scenario }: { scenario: MatchScenario }) {
-  const { side, overview, headline } = scenario
-  return (
-    <div className="relative overflow-hidden rounded-[12px] border border-border bg-card mb-3">
-      <span className={cn('absolute left-0 top-0 bottom-0 w-[3px]', SIDE_RAIL[side])} />
-      <div className="px-4 py-3 pl-[18px]">
-        <span className="mb-1.5 inline-flex items-center gap-[5px] text-[10px] font-extrabold uppercase tracking-[0.14em] text-muted-foreground">
-          <span className="size-[6px] rounded-full bg-destructive animate-pulse" />
-          {'As it stands'}
-        </span>
-        <p className="font-display text-[18px] font-extrabold uppercase leading-[1.05] tracking-[0.005em]">
-          {headline ? (
-            <>
-              <span className="mr-1.5">{KIND_GLYPH[headline.kind]}</span>
-              {headline.headline}
-            </>
-          ) : overview.predictionCount > 0 ? (
-            'Still anyone’s game'
-          ) : (
-            'No one predicted this'
-          )}
-        </p>
-        <p className="mt-1 text-[12px] leading-snug text-muted-foreground">
-          {scenarioStatLine(overview)}
-        </p>
-      </div>
-    </div>
-  )
-}
+function NextGoalCard({
+  scenario,
+  match,
+}: {
+  scenario: MatchScenario
+  match: Match
+}) {
+  const { finalScore, scorer, overview } = scenario
+  const winners = scenario.winners ?? []
+  const scorerTeam = scorer === 'away' ? match.awayTeam : match.homeTeam
+  const shown = winners.slice(0, 3)
+  const extra = winners.length - shown.length
 
-// Compact one-line "as it stands" strip for the league board's live cards —
-// the live headline only, sized to sit as a card section (mirrors the dashed
-// "Your pick" strip). Re-renders on every goal via the parent's memo.
-export function LiveStoryStrip({ scenario }: { scenario: MatchScenario }) {
-  const { side, overview, headline } = scenario
-  return (
-    <div className="flex items-center gap-2.5 border-t border-dashed border-hair-strong px-[14px] py-[9px]">
-      <span className={cn('h-7 w-[3px] shrink-0 rounded-full', SIDE_RAIL[side])} />
-      <div className="min-w-0 flex-1">
-        <span className="inline-flex items-center gap-[5px] text-[9px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground">
-          <span className="size-[5px] rounded-full bg-destructive animate-pulse" />
-          {'As it stands'}
-        </span>
-        <p className="truncate font-display text-[13px] font-bold uppercase leading-tight tracking-[0.01em]">
-          {headline ? (
-            <>
-              <span className="mr-1">{KIND_GLYPH[headline.kind]}</span>
-              {headline.headline}
-            </>
-          ) : overview.predictionCount > 0 ? (
-            'Still anyone’s game'
-          ) : (
-            'No one predicted this'
-          )}
-        </p>
-      </div>
-    </div>
-  )
-}
-
-function ScenarioCard({ scenario }: { scenario: MatchScenario }) {
-  const { finalScore, side, isCurrent, overview, headline } = scenario
   return (
     <div className="relative overflow-hidden rounded-[10px] border border-border bg-card mb-[10px]">
-      <span className={cn('absolute left-0 top-0 bottom-0 w-[3px]', SIDE_RAIL[side])} />
+      <span
+        className={cn(
+          'absolute left-0 top-0 bottom-0 w-[3px]',
+          SCORER_RAIL[scorer ?? 'home'],
+        )}
+      />
 
-      <div className="flex items-center justify-between gap-2 px-4 pt-[9px] pl-[18px]">
-        <span className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-muted-foreground">
-          {isCurrent ? 'If it stays' : 'If it ends'}
+      {/* what needs to happen */}
+      <div className="flex items-center justify-between gap-2 px-4 pt-[10px] pb-1.5 pl-[18px]">
+        <span className="inline-flex min-w-0 items-center gap-1.5">
+          <Crest team={scorerTeam} size="xs" />
+          <span className="truncate font-display text-[13px] font-extrabold uppercase tracking-[0.02em]">
+            {teamName(scorerTeam)}
+          </span>
+          <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+            {'goal'}
+          </span>
         </span>
-        <span className="font-display text-[18px] font-black tabular-nums tracking-[-0.03em]">
+        <span className="shrink-0 font-display text-[16px] font-black tabular-nums tracking-[-0.03em]">
+          {'→ '}
           {finalScore.home}
           {'–'}
           {finalScore.away}
         </span>
       </div>
 
-      <div className="px-4 pb-3 pt-1.5 pl-[18px]">
-        <p className="font-display text-[14px] font-bold uppercase leading-tight tracking-[0.01em]">
-          {headline ? (
-            <>
-              <span className="mr-1.5">{KIND_GLYPH[headline.kind]}</span>
-              {headline.headline}
-            </>
-          ) : overview.predictionCount > 0 ? (
-            'How the league called it'
-          ) : (
-            'No one predicted this'
-          )}
-        </p>
-        <p className="mt-1 text-[12px] leading-snug text-muted-foreground">
-          {scenarioStatLine(overview)}
-        </p>
+      {/* who's in for the big points */}
+      <div className="px-4 pb-3 pl-[18px]">
+        {winners.length > 0 ? (
+          <ul className="flex flex-col gap-1.5">
+            {shown.map((w) => (
+              <li key={w.profile.id} className="flex items-center gap-2">
+                <Avatar profile={w.profile} size="xs" />
+                <span className="truncate text-[13px] font-medium">
+                  {w.profile.displayName}
+                </span>
+                {w.booster && <BoosterPill booster={w.booster} />}
+                <span className="ml-auto shrink-0 font-display text-[18px] font-black leading-none tracking-[-0.02em] text-primary">
+                  {'+'}
+                  {w.points}
+                </span>
+              </li>
+            ))}
+            {extra > 0 && (
+              <li className="text-[11px] text-muted-foreground">
+                {`+${extra} more nail it`}
+              </li>
+            )}
+          </ul>
+        ) : (
+          <p className="text-[12px] leading-snug text-muted-foreground">
+            {`No one called ${finalScore.home}–${finalScore.away}`}
+            {overview.topScorer
+              ? ` · ${overview.topScorer.displayName} leads on outcome +${overview.topPoints}`
+              : ''}
+          </p>
+        )}
       </div>
     </div>
   )
 }
 
-// Scenario cards for a live match; renders nothing when there are none.
-export function ScenariosSection({ scenarios }: { scenarios: MatchScenario[] }) {
+// Next-goal cards for a live match; renders nothing when there are none.
+export function NextGoalScenarios({
+  scenarios,
+  match,
+}: {
+  scenarios: MatchScenario[]
+  match: Match
+}) {
   if (scenarios.length === 0) return null
   return (
     <div>
       {scenarios.map((s) => (
-        <ScenarioCard
-          key={`${s.finalScore.home}-${s.finalScore.away}`}
+        <NextGoalCard
+          key={s.scorer ?? `${s.finalScore.home}-${s.finalScore.away}`}
           scenario={s}
+          match={match}
         />
       ))}
     </div>

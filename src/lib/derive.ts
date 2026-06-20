@@ -764,39 +764,6 @@ export function derivePredictionGroups(args: {
 }
 
 /**
- * Choose a few plausible final scores to project. The current live score
- * (labelled "if it stays …" downstream) plus the most-backed exact scoreline on
- * each outcome side that has support. De-duped, capped at 4, most-likely first.
- */
-export function pickScenarioOutcomes(args: {
-  match: Match
-  predictions: PredictionWithDetails[]
-}): { home: number; away: number }[] {
-  const { match, predictions } = args
-  const groups = derivePredictionGroups({ match, predictions })
-  const out: { home: number; away: number }[] = []
-  const seen = new Set<string>()
-  const add = (home: number, away: number) => {
-    const key = `${home}-${away}`
-    if (seen.has(key)) return
-    seen.add(key)
-    out.push({ home, away })
-  }
-
-  // The current live score leads — "what happens if nothing else changes".
-  if (match.homeScore != null && match.awayScore != null) {
-    add(match.homeScore, match.awayScore)
-  }
-  // Then the most-backed scoreline per side (groups already count-desc ordered).
-  for (const g of groups) {
-    const top = g.scorelines[0]
-    if (top) add(top.homeScore, top.awayScore)
-  }
-
-  return out.slice(0, 4)
-}
-
-/**
  * Project one hypothetical final score: re-score every visible pick against it
  * (the real scorer — boosters and rarity included) and build the league story
  * it would produce, reusing deriveMatchOverview / deriveMatchMoments.
@@ -849,10 +816,16 @@ export function deriveScenario(args: {
 }
 
 /**
- * Scenario cards for a live match. Empty unless the match is live with visible
- * picks (scheduled picks are blind; finished matches have "The Story").
+ * The two "next goal" scenarios for a live match: who's in for the big points
+ * and what needs to happen. From the current score, project the immediate
+ * results — the home team scoring (H+1 : A) and the away team scoring
+ * (H : A+1) — and, for each, the players who'd nail that exact scoreline
+ * (their projected total, boosters and rarity included), sorted biggest-first.
+ *
+ * Empty unless the match is live with a known score and visible picks. Re-runs
+ * on every goal (the score moves).
  */
-export function deriveScenarios(args: {
+export function deriveNextGoalScenarios(args: {
   match: Match
   predictions: PredictionWithDetails[]
   memberCount: number
@@ -860,31 +833,38 @@ export function deriveScenarios(args: {
 }): MatchScenario[] {
   const { match, predictions, memberCount, league } = args
   if (match.status !== 'live' || predictions.length === 0) return []
-  return pickScenarioOutcomes({ match, predictions }).map((finalScore) =>
-    deriveScenario({ match, predictions, memberCount, league, finalScore }),
-  )
-}
+  if (match.homeScore == null || match.awayScore == null) return []
 
-/**
- * The "as it stands" scenario for a live match — the story if it ended on the
- * current score. Used for the compact live headline on the league board's live
- * cards; re-derives on every goal. Null when not live / no picks / no score.
- */
-export function deriveLiveHeadline(args: {
-  match: Match
-  predictions: PredictionWithDetails[]
-  memberCount: number
-  league: { id: UUID; name: string; icon: string | null }
-}): MatchScenario | null {
-  const { match, predictions, memberCount, league } = args
-  if (match.status !== 'live' || predictions.length === 0) return null
-  if (match.homeScore == null || match.awayScore == null) return null
-  return deriveScenario({
-    match,
-    predictions,
-    memberCount,
-    league,
-    finalScore: { home: match.homeScore, away: match.awayScore },
+  const h = match.homeScore
+  const a = match.awayScore
+  const candidates: { finalScore: { home: number; away: number }; scorer: 'home' | 'away' }[] = []
+  if (match.homeTeam) candidates.push({ finalScore: { home: h + 1, away: a }, scorer: 'home' })
+  if (match.awayTeam) candidates.push({ finalScore: { home: h, away: a + 1 }, scorer: 'away' })
+
+  return candidates.map(({ finalScore, scorer }) => {
+    const scenario = deriveScenario({ match, predictions, memberCount, league, finalScore })
+    // "In for big points" = whoever picked this exact scoreline; under it they
+    // jump from a correct-outcome +1 to the full exact (×booster, ×rarity).
+    const winners = predictions
+      .filter(
+        (p) => p.homeScore === finalScore.home && p.awayScore === finalScore.away,
+      )
+      .map((p) => ({
+        profile: p.profile,
+        points: computePoints({
+          prediction: p,
+          finalScore,
+          rarity: computeRarity(p, predictions, memberCount),
+          final: true,
+        }).total,
+        booster: p.booster ?? null,
+      }))
+      .sort(
+        (x, y) =>
+          y.points - x.points ||
+          x.profile.displayName.localeCompare(y.profile.displayName),
+      )
+    return { ...scenario, scorer, winners }
   })
 }
 

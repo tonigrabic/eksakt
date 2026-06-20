@@ -19,10 +19,10 @@ import { useRealtimeMatch } from '@/hooks/use-realtime-match'
 import { useLiveMinute } from '@/hooks/use-live-minute'
 import { useRecentMoments } from '@/hooks/use-recent-moments'
 import { MomentCard } from '@/components/moment-card'
-import { LiveStoryStrip, PredictionBoard } from '@/components/match-scenarios'
+import { NextGoalScenarios, PredictionBoard } from '@/components/match-scenarios'
 import {
-  deriveLiveHeadline,
   deriveMatchOverview,
+  deriveNextGoalScenarios,
   derivePredictionGroups,
 } from '@/lib/derive'
 import { AnimatedScore } from '@/components/animated-score'
@@ -408,12 +408,18 @@ function LiveScoreboard({
   const [showAll, setShowAll] = useState(false)
   const matchHref = `/matches/${match.id}?league=${leagueId}`
 
-  // The live story preview: "as it stands" headline (always) + the grouped
-  // "who picked what" board (shown when the picks accordion is expanded). Both
-  // re-derive on every realtime score tick. Pure — over the picks the card
-  // already carries.
-  const story = useMemo(
-    () => deriveLiveHeadline({ match, predictions: rankedPredictions, memberCount, league }),
+  // The live story preview, shown when the picks accordion is expanded: the
+  // grouped "who picked what" board + the next-goal scenarios (who's in for the
+  // big points and what needs to happen). Both re-derive on every realtime
+  // score tick. Pure — over the picks the card already carries.
+  const nextGoals = useMemo(
+    () =>
+      deriveNextGoalScenarios({
+        match,
+        predictions: rankedPredictions,
+        memberCount,
+        league,
+      }),
     [match, rankedPredictions, memberCount, league],
   )
   const board = useMemo(
@@ -485,9 +491,6 @@ function LiveScoreboard({
         </div>
       </div>
 
-      {/* as it stands — live story headline (re-writes on every goal) */}
-      {story && <LiveStoryStrip scenario={story} />}
-
       {/* your pick */}
       {userPrediction && (
         <div className="grid grid-cols-[auto_1fr_auto] gap-[14px] items-center px-[14px] py-[11px] border-t border-dashed border-hair-strong bg-[oklch(0.105_0.003_60)]">
@@ -558,6 +561,15 @@ function LiveScoreboard({
         </button>
       ) : (
         <>
+          {nextGoals.length > 0 && (
+            <div className="border-t border-border px-[14px] pt-[11px]">
+              <p className="mb-2 inline-flex items-center gap-[6px] text-[10px] font-extrabold uppercase tracking-[0.14em] text-muted-foreground">
+                <span className="size-[5px] rounded-full bg-destructive animate-pulse" />
+                {'If a goal goes in'}
+              </p>
+              <NextGoalScenarios scenarios={nextGoals} match={match} />
+            </div>
+          )}
           {board && (
             <div className="border-t border-border px-[14px] py-[11px]">
               <PredictionBoard groups={board.groups} overview={board.overview} />
