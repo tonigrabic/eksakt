@@ -326,12 +326,13 @@ export function MomentCard({
     : (verdict ?? overviewHeadline(overview))
   const storyPoints = isPerson ? headline!.points : undefined
 
-  // Crowd strip — who won the match + how many nailed it. Suppress the top haul
-  // when it's the same player the story line already features (no echo).
+  // Crowd strip — who won the match + how many nailed it. Only bill a "winner"
+  // when the haul is actually meaningful (≥3; a lone +1 isn't a win), and
+  // suppress it when it's the same player the story line already features.
   const topScorer = overview.topScorer
   const showHaul =
     topScorer != null &&
-    overview.topPoints > 0 &&
+    overview.topPoints >= 3 &&
     !(isPerson && topScorer.id === actors[0]?.id)
   const crowdStats = [
     showHaul ? `${topScorer!.displayName} +${overview.topPoints}` : null,
@@ -383,20 +384,39 @@ export function MomentCard({
       </div>
 
       {/* story: who starred (a person) or the crowd verdict */}
-      <div className="flex items-center gap-2 pt-2 pr-[14px] pl-4">
-        {isPerson && actors.length === 1 && (
-          <Avatar profile={actors[0]} size="sm" />
-        )}
-        {isPerson && actors.length > 1 && <MomentActors actors={actors} />}
-        <span className="min-w-0 flex-1 truncate font-display text-[15px] font-extrabold uppercase leading-tight tracking-[0.005em]">
-          {storyText}
-        </span>
-        {headline?.booster && <BoosterPill booster={headline.booster} />}
-        {typeof storyPoints === 'number' && storyPoints > 0 && (
-          <span className="shrink-0 font-display text-[18px] font-black leading-none tracking-[-0.02em] text-primary">
-            {'+'}
-            {storyPoints}
+      <div className="pt-2 pr-[14px] pl-4">
+        <div className="flex items-center gap-2">
+          {isPerson && actors.length === 1 && (
+            <Avatar profile={actors[0]} size="sm" />
+          )}
+          <span className="min-w-0 flex-1 truncate font-display text-[15px] font-extrabold uppercase leading-tight tracking-[0.005em]">
+            {storyText}
           </span>
+          {headline?.booster && <BoosterPill booster={headline.booster} />}
+          {typeof storyPoints === 'number' && storyPoints > 0 && (
+            <span className="shrink-0 font-display text-[18px] font-black leading-none tracking-[-0.02em] text-primary">
+              {'+'}
+              {storyPoints}
+            </span>
+          )}
+        </div>
+        {/* Name the players behind a shared moment (e.g. the Eksakt-getters)
+            rather than showing anonymous avatars. */}
+        {isPerson && actors.length > 1 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {actors.slice(0, 4).map((a) => (
+              <span key={a.id} className="inline-flex items-center gap-1.5">
+                <Avatar profile={a} size="xs" />
+                <span className="text-[12px] font-medium">{a.displayName}</span>
+              </span>
+            ))}
+            {actors.length > 4 && (
+              <span className="font-mono text-[11px] text-muted-foreground">
+                {'+'}
+                {actors.length - 4}
+              </span>
+            )}
+          </div>
         )}
       </div>
 
