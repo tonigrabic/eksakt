@@ -508,28 +508,48 @@ export function deriveMatchMoments(args: {
     }
   }
 
-  // 🧊 contrarian — a correct call almost nobody else made.
-  const contrarianPick = correct
+  // 🧊 contrarian — a correct call almost nobody else made. Every correct pick
+  // shares the one actual outcome, so the rare-outcome callers are a *group*,
+  // not a single person — credit them all (e.g. "Barca89 & Kate went against
+  // the grain") rather than just the top scorer.
+  const contrarians = correct
+    .filter((p) => !starred.has(p.userId))
     .map((p) => ({ p, r: rarityOf(p, predictions, memberCount) }))
     .filter(({ r }) => r.outcomePct < 10 || r.sameOutcomeCount <= 1)
-    .sort((a, b) => a.r.outcomePct - b.r.outcomePct || total(b.p) - total(a.p))
-    .find(({ p }) => !starred.has(p.userId))
-  if (contrarianPick) {
-    const { p, r } = contrarianPick
-    starred.add(p.userId)
+    .sort(
+      (a, b) =>
+        total(b.p) - total(a.p) ||
+        a.p.profile.displayName.localeCompare(b.p.profile.displayName),
+    )
+  if (contrarians.length > 0) {
+    const r = contrarians[0].r
+    const players = contrarians.map(({ p }) => p)
+    players.forEach((p) => starred.add(p.userId))
+    const topTotal = total(players[0])
+    const names = players.map((p) => p.profile.displayName)
+    const headline =
+      players.length === 1
+        ? `${names[0]} went against the grain`
+        : players.length === 2
+          ? `${names[0]} & ${names[1]} went against the grain`
+          : `${players.length} went against the grain`
+    const subtext =
+      players.length === 1
+        ? r.sameOutcomeCount <= 1
+          ? `The only one to call it · +${topTotal}`
+          : `Just ${Math.round(r.outcomePct)}% backed it · +${topTotal}`
+        : `Just ${Math.round(r.outcomePct)}% backed it`
     moments.push(
       make({
         kind: 'contrarian',
-        actor: p.profile,
-        points: total(p),
+        actor: players.length === 1 ? players[0].profile : undefined,
+        actors: players.length > 1 ? players.map((p) => p.profile) : undefined,
+        points: topTotal,
         rarity: r,
-        headline: `${p.profile.displayName} went against the grain`,
-        subtext:
-          r.sameOutcomeCount <= 1
-            ? `The only one to call it · +${total(p)}`
-            : `Just ${Math.round(r.outcomePct)}% backed it · +${total(p)}`,
+        headline,
+        subtext,
         severity: severity('contrarian', {
-          points: total(p),
+          points: topTotal,
           outcomePct: r.outcomePct,
         }),
       }),
