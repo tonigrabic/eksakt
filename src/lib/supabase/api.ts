@@ -178,15 +178,30 @@ async function fetchPredictionsForLeague(
   // RLS hides others' predictions for matches that haven't kicked off yet,
   // so this naturally returns: my picks for everything, others' picks only
   // for live/finished matches.
+  //
+  // PostgREST caps every response at the project's max-rows (1000). A long
+  // multi-week league — e.g. a World Cup pool with dozens of members —
+  // accumulates well past that, and the overflow is dropped *silently*: a
+  // saved pick that lands beyond row 1000 reads back as missing, so the UI
+  // re-shows the "Predict" button and standings under-count its points.
+  // Page through with .range() until a short page marks the end; order by
+  // id (unique) so pages can't skip or repeat a row.
   const supabase = createClient()
-  const { data, error } = await supabase
-    .from('predictions')
-    .select(PREDICTION_SELECT)
-    .eq('league_id', leagueId)
-  if (error) throw error
-  return (data ?? []).map((row) =>
-    rowToPrediction(row as Parameters<typeof rowToPrediction>[0]),
-  )
+  const PAGE = 1000
+  const rows: Parameters<typeof rowToPrediction>[0][] = []
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('predictions')
+      .select(PREDICTION_SELECT)
+      .eq('league_id', leagueId)
+      .order('id', { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) throw error
+    const batch = (data ?? []) as Parameters<typeof rowToPrediction>[0][]
+    rows.push(...batch)
+    if (batch.length < PAGE) break
+  }
+  return rows.map((row) => rowToPrediction(row))
 }
 
 // ── Dashboard ───────────────────────────────────────────────────────────────
