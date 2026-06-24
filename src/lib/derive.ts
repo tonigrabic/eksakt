@@ -91,98 +91,109 @@ export function isUpcomingPredictable(match: Match, now: number = Date.now()): b
   return new Date(match.kickoffTime).getTime() > now
 }
 
-// ── Boosters ────────────────────────────────────────────────────────────────
-
-export function boosterUsage(
-  predictions: Prediction[],
-  pool: BoosterCounts,
-): { used: BoosterCounts; remaining: BoosterCounts; totalUsed: number } {
-  const used: BoosterCounts = { x2: 0, x3: 0, x5: 0 }
-  for (const p of predictions) {
-    if (p.booster) used[p.booster] += 1
-  }
-  const remaining: BoosterCounts = {
-    x2: Math.max(0, pool.x2 - used.x2),
-    x3: Math.max(0, pool.x3 - used.x3),
-    x5: Math.max(0, pool.x5 - used.x5),
-  }
-  return { used, remaining, totalUsed: used.x2 + used.x3 + used.x5 }
-}
-
 // ── Standings ───────────────────────────────────────────────────────────────
 
 /**
- * Compute the full standings for a league. Inputs are scoped to that
- * league only — caller is responsible for filtering predictions to the
- * single `leagueId`.
- *
- * `currentUserId` is used to flag the row that represents "me" so UI
- * consumers can highlight it without name-based heuristics.
- * `beforeSnapshot` maps userId → position before today's live matches
- * began. If absent, positionChange is 0 for everyone.
+ * Per-member finished-half aggregate from the get_league_standings RPC — the
+ * server-summed counterpart to what the old client-side computeStandings pass
+ * recomputed from every prediction.
  */
-export function computeStandings(args: {
+export type StandingAggregate = {
+  finishedPoints: number // SUM of frozen points.total over finished picks
+  exactScores: number // COUNT of exact (base 4) finished picks — the tiebreaker
+  boostersUsed: BoosterCounts // visible booster usage (remaining = pool − used)
+}
+
+/**
+ * Assemble the league leaderboard from the server-aggregated finished half
+ * (one StandingAggregate per member, keyed by userId) plus a client-side
+ * overlay of only the currently-live matches.
+ *
+ * Replaces computeStandings' O(members × all-matches) rebuild: finished totals,
+ * the exact-score tiebreaker and booster usage are summed in Postgres, and only
+ * live predictions (live matches × members — bounded) are scored here, with the
+ * same scorer, to add provisional matchday points. Scheduled matches contribute
+ * nothing, so they're never fetched.
+ *
+ * `liveMatches` / `livePredictions` must be scoped to the league's currently-
+ * live matches (the live predictions carry every visible member's pick — the
+ * rarity peer set). When `withPositionChange` is set and a match is live, each
+ * row's positionChange reflects how the live results are shifting positions vs.
+ * the finished-only order; otherwise it stays 0 (matching the old callers that
+ * passed no beforeSnapshot — dashboard, my-leagues, prediction-context).
+ */
+export function buildStandings(args: {
   members: LeagueMember[]
-  matches: Match[]
-  predictions: Prediction[]
+  aggregates: Map<UUID, StandingAggregate>
+  liveMatches: Match[]
+  livePredictions: Prediction[]
   leaguePool: BoosterCounts
   currentUserId?: UUID
-  beforeSnapshot?: Record<UUID, number>
+  withPositionChange?: boolean
 }): StandingRow[] {
   const {
     members,
-    matches,
-    predictions,
+    aggregates,
+    liveMatches,
+    livePredictions,
     leaguePool,
     currentUserId,
-    beforeSnapshot,
+    withPositionChange,
   } = args
-  const matchById = new Map(matches.map((m) => [m.id, m]))
-  // Pre-bucket peers per match for O(1) rarity lookups.
-  const peersByMatch = new Map<UUID, Prediction[]>()
-  for (const p of predictions) {
-    const arr = peersByMatch.get(p.matchId) ?? []
+
+  // Provisional matchday points from the live overlay. Bucket peers per match
+  // for O(1) rarity lookups, then sum each member's live points with the same
+  // scorer the finished half used server-side.
+  const liveMatchById = new Map(liveMatches.map((m) => [m.id, m]))
+  const livePeersByMatch = new Map<UUID, Prediction[]>()
+  for (const p of livePredictions) {
+    const arr = livePeersByMatch.get(p.matchId) ?? []
     arr.push(p)
-    peersByMatch.set(p.matchId, arr)
+    livePeersByMatch.set(p.matchId, arr)
+  }
+  const matchdayByUser = new Map<UUID, number>()
+  for (const p of livePredictions) {
+    const match = liveMatchById.get(p.matchId)
+    if (!match) continue
+    const peers = livePeersByMatch.get(p.matchId) ?? []
+    const pts = computePredictionPoints(p, match, peers, members.length)
+    if (!pts) continue
+    matchdayByUser.set(p.userId, (matchdayByUser.get(p.userId) ?? 0) + pts.total)
   }
 
   const rows: StandingRow[] = members.map((m) => {
-    let totalPoints = 0
-    let matchdayPoints = 0
-    let exactScores = 0
-    const userPredictions: Prediction[] = []
-
-    for (const p of predictions) {
-      if (p.userId !== m.userId) continue
-      userPredictions.push(p)
-      const match = matchById.get(p.matchId)
-      if (!match) continue
-      const peers = peersByMatch.get(p.matchId) ?? []
-      const pts = computePredictionPoints(p, match, peers, members.length)
-      if (!pts) continue
-      if (match.status === 'finished') {
-        totalPoints += pts.total
-        if (pts.base === 4) exactScores += 1
-      } else if (match.status === 'live') {
-        matchdayPoints += pts.total
-      }
-    }
-
-    const usage = boosterUsage(userPredictions, leaguePool)
+    const agg = aggregates.get(m.userId)
+    const used = agg?.boostersUsed ?? { x2: 0, x3: 0, x5: 0 }
     return {
       position: 0,
       profile: m.profile,
       isCurrentUser: m.userId === currentUserId,
-      totalPoints,
-      matchdayPoints,
-      exactScores,
-      boostersUsed: usage.totalUsed,
-      boostersRemaining: usage.remaining,
+      totalPoints: agg?.finishedPoints ?? 0,
+      matchdayPoints: matchdayByUser.get(m.userId) ?? 0,
+      exactScores: agg?.exactScores ?? 0,
+      boostersUsed: used.x2 + used.x3 + used.x5,
+      boostersRemaining: {
+        x2: Math.max(0, leaguePool.x2 - used.x2),
+        x3: Math.max(0, leaguePool.x3 - used.x3),
+        x5: Math.max(0, leaguePool.x5 - used.x5),
+      },
       positionChange: 0,
     }
   })
 
-  // Combined points desc, exactScores tiebreaker.
+  // "Before live" order = finished points only, same tiebreaker. Derived from
+  // the same rows (no extra pass over predictions) and only when something is
+  // live, so the ▲/▼ column shows how the live results are currently moving
+  // people. Mirrors the old positionSnapshotBeforeLive (live matches excluded).
+  let beforePosition: Map<UUID, number> | undefined
+  if (withPositionChange && liveMatches.length > 0) {
+    const before = [...rows].sort(
+      (a, b) => b.totalPoints - a.totalPoints || b.exactScores - a.exactScores,
+    )
+    beforePosition = new Map(before.map((r, i) => [r.profile.id, i + 1]))
+  }
+
+  // Final order = combined (finished + matchday) desc, exactScores tiebreaker.
   rows.sort((a, b) => {
     const at = a.totalPoints + a.matchdayPoints
     const bt = b.totalPoints + b.matchdayPoints
@@ -192,8 +203,8 @@ export function computeStandings(args: {
 
   rows.forEach((r, idx) => {
     r.position = idx + 1
-    if (beforeSnapshot) {
-      const before = beforeSnapshot[r.profile.id]
+    if (beforePosition) {
+      const before = beforePosition.get(r.profile.id)
       r.positionChange = before ? before - r.position : 0
     }
   })
