@@ -545,6 +545,17 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      get_league_standings: {
+        Args: { p_league_id: string }
+        Returns: {
+          user_id: string
+          finished_points: number
+          exact_scores: number
+          boosters_x2: number
+          boosters_x3: number
+          boosters_x5: number
+        }[]
+      }
       is_league_member: { Args: { p_league_id: string }; Returns: boolean }
       join_league_by_code: { Args: { p_code: string }; Returns: string }
       league_match_ids: {

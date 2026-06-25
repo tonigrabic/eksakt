@@ -16,8 +16,8 @@ import {
   rowToProfile,
 } from './mappers'
 import {
+  buildStandings,
   completedMatchSummary,
-  computeStandings,
   isLeagueFinished,
   isUpcomingPredictable,
   liveMatchSummary,
@@ -25,6 +25,7 @@ import {
   toFeedItem,
   upcomingMatchSummary,
 } from '@/lib/derive'
+import type { StandingAggregate } from '@/lib/derive'
 import type {
   AddLeagueCompetitionInput,
   BoosterCounts,
@@ -118,6 +119,32 @@ export async function listCompetitions(): Promise<Competition[]> {
 
 // ── Per-league raw fetchers ─────────────────────────────────────────────────
 
+// Page through a PostgREST/RPC query in 1000-row windows until a short page
+// marks the end. PostgREST silently caps each response at the project's
+// max-rows (1000); an unbounded select past that drops the overflow without
+// error — the truncation bug commit 6148cd0 fixed for the standings fetch. Any
+// list query that can exceed 1000 rows for a big/long-running league routes
+// through here. Callers must `.order(...)` by a unique key (or a tiebreak
+// ending in one) so pages can't skip or repeat a row, with `.range(from, to)`
+// applied last.
+async function fetchAllPages<Row>(
+  fetchPage: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: Row[] | null; error: unknown }>,
+): Promise<Row[]> {
+  const PAGE = 1000
+  const rows: Row[] = []
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await fetchPage(from, from + PAGE - 1)
+    if (error) throw error
+    const batch = data ?? []
+    rows.push(...batch)
+    if (batch.length < PAGE) break
+  }
+  return rows
+}
+
 async function fetchLeagueWithCounts(
   leagueId: UUID,
 ): Promise<{ league: League; members: LeagueMember[] }> {
@@ -153,16 +180,25 @@ async function fetchLeagueWithCounts(
  */
 async function fetchMatchesForLeague(leagueId: UUID): Promise<Match[]> {
   const supabase = createClient()
-  // PostgREST chains `.select(...)` onto a SETOF-table RPC at runtime to
-  // embed FK joins, but the generated types don't model embeds on RPC
-  // results. Cast through `unknown` to MatchWithJoins — the shape is
-  // guaranteed by MATCH_SELECT.
-  const { data, error } = await supabase
-    .rpc('get_league_matches', { p_league_id: leagueId })
-    .select(MATCH_SELECT)
-    .order('kickoff_time', { ascending: true })
-  if (error) throw error
-  const rows = (data ?? []) as unknown as Parameters<typeof rowToMatch>[0][]
+  // PostgREST chains `.select(...)` onto a SETOF-table RPC at runtime to embed
+  // FK joins, but the generated types don't model embeds on RPC results — cast
+  // through `unknown` to MatchWithJoins, the shape MATCH_SELECT guarantees.
+  // Paginated: a large multi-competition league's match set can exceed the
+  // 1000-row cap. Order by kickoff_time then id (unique) so the kickoff sort is
+  // preserved while pages stay stable (no skips/repeats across the boundary).
+  type Row = Parameters<typeof rowToMatch>[0]
+  const rows = await fetchAllPages<Row>(
+    (from, to) =>
+      supabase
+        .rpc('get_league_matches', { p_league_id: leagueId })
+        .select(MATCH_SELECT)
+        .order('kickoff_time', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: Row[] | null
+        error: unknown
+      }>,
+  )
   return rows.map(rowToMatch)
 }
 
@@ -172,36 +208,132 @@ async function fetchMatchesForLeague(leagueId: UUID): Promise<Match[]> {
 // yet, so the same query works for live + finished matches.
 const PREDICTION_SELECT = '*, points(*)'
 
-async function fetchPredictionsForLeague(
+type PredictionRow = Parameters<typeof rowToPrediction>[0]
+
+// Predictions for a specific set of matches in a league — bounded by
+// (matches × members). Used for the live-match overlay + the live "who picked
+// what" board, where we need every visible member's pick. RLS still hides
+// others' picks for any match that hasn't kicked off.
+async function fetchPredictionsForMatches(
   leagueId: UUID,
+  matchIds: UUID[],
 ): Promise<Prediction[]> {
-  // RLS hides others' predictions for matches that haven't kicked off yet,
-  // so this naturally returns: my picks for everything, others' picks only
-  // for live/finished matches.
-  //
-  // PostgREST caps every response at the project's max-rows (1000). A long
-  // multi-week league — e.g. a World Cup pool with dozens of members —
-  // accumulates well past that, and the overflow is dropped *silently*: a
-  // saved pick that lands beyond row 1000 reads back as missing, so the UI
-  // re-shows the "Predict" button and standings under-count its points.
-  // Page through with .range() until a short page marks the end; order by
-  // id (unique) so pages can't skip or repeat a row.
+  if (matchIds.length === 0) return []
   const supabase = createClient()
-  const PAGE = 1000
-  const rows: Parameters<typeof rowToPrediction>[0][] = []
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
-      .from('predictions')
-      .select(PREDICTION_SELECT)
-      .eq('league_id', leagueId)
-      .order('id', { ascending: true })
-      .range(from, from + PAGE - 1)
-    if (error) throw error
-    const batch = (data ?? []) as Parameters<typeof rowToPrediction>[0][]
-    rows.push(...batch)
-    if (batch.length < PAGE) break
-  }
+  const rows = await fetchAllPages<PredictionRow>(
+    (from, to) =>
+      supabase
+        .from('predictions')
+        .select(PREDICTION_SELECT)
+        .eq('league_id', leagueId)
+        .in('match_id', matchIds)
+        .order('id', { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: PredictionRow[] | null
+        error: unknown
+      }>,
+  )
   return rows.map((row) => rowToPrediction(row))
+}
+
+// The current user's own picks across a league — bounded by the number of
+// matches they've predicted (≤ the league's match count, NOT members ×
+// matches). Drives the upcoming/completed match summaries, where only the
+// viewer's own prediction is rendered. Carries the persisted `points` embed so
+// finished picks resolve their stored points without a peer recompute.
+async function fetchUserPredictionsForLeague(
+  leagueId: UUID,
+  userId: UUID,
+): Promise<Prediction[]> {
+  const supabase = createClient()
+  const rows = await fetchAllPages<PredictionRow>(
+    (from, to) =>
+      supabase
+        .from('predictions')
+        .select(PREDICTION_SELECT)
+        .eq('league_id', leagueId)
+        .eq('user_id', userId)
+        .order('id', { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: PredictionRow[] | null
+        error: unknown
+      }>,
+  )
+  return rows.map((row) => rowToPrediction(row))
+}
+
+// ── Standings (server-aggregated + live overlay) ─────────────────────────────
+
+type StandingsRpcRow = {
+  user_id: UUID
+  finished_points: number
+  exact_scores: number
+  boosters_x2: number
+  boosters_x3: number
+  boosters_x5: number
+}
+
+/**
+ * League standings without the old O(members × matches) prediction pull. The
+ * finished half (points + exact-score tiebreaker + booster usage) is summed by
+ * the get_league_standings RPC; only currently-live matches are fetched and
+ * scored client-side for provisional matchday points. Returns those live
+ * predictions too, so callers that also render live-match summaries reuse them
+ * instead of refetching.
+ *
+ * `matches` is the league's effective match set (already fetched by callers for
+ * their upcoming/live/finished sections); we read the live ones from it.
+ * `withPositionChange` enables the ▲/▼ movement column (league + match detail).
+ */
+async function loadLeagueStandings(args: {
+  leagueId: UUID
+  members: LeagueMember[]
+  matches: Match[]
+  leaguePool: BoosterCounts
+  currentUserId?: UUID
+  withPositionChange?: boolean
+}): Promise<{ standings: StandingRow[]; livePredictions: Prediction[] }> {
+  const {
+    leagueId,
+    members,
+    matches,
+    leaguePool,
+    currentUserId,
+    withPositionChange,
+  } = args
+  const supabase = createClient()
+
+  const liveMatches = matches.filter((m) => m.status === 'live')
+
+  // Aggregate (RPC) and the live overlay are independent — fetch in parallel.
+  const [{ data: aggRows, error }, livePredictions] = await Promise.all([
+    supabase.rpc('get_league_standings', { p_league_id: leagueId }),
+    fetchPredictionsForMatches(
+      leagueId,
+      liveMatches.map((m) => m.id),
+    ),
+  ])
+  if (error) throw error
+
+  const aggregates = new Map<UUID, StandingAggregate>()
+  for (const r of (aggRows ?? []) as StandingsRpcRow[]) {
+    aggregates.set(r.user_id, {
+      finishedPoints: r.finished_points,
+      exactScores: r.exact_scores,
+      boostersUsed: { x2: r.boosters_x2, x3: r.boosters_x3, x5: r.boosters_x5 },
+    })
+  }
+
+  const standings = buildStandings({
+    members,
+    aggregates,
+    liveMatches,
+    livePredictions,
+    leaguePool,
+    currentUserId,
+    withPositionChange,
+  })
+  return { standings, livePredictions }
 }
 
 // ── Dashboard ───────────────────────────────────────────────────────────────
@@ -237,15 +369,19 @@ async function buildLeagueDashboardSummary(
   const matches = await fetchMatchesForLeague(leagueId)
   // Skip leagues whose matches are all finished — nothing to dashboard.
   if (isLeagueFinished(matches)) return null
-  const predictions = await fetchPredictionsForLeague(leagueId)
 
-  const standings = computeStandings({
-    members,
-    matches,
-    predictions,
-    leaguePool: league.settings.boosters.pool,
-    currentUserId: userId,
-  })
+  // Standings (server-aggregated + live overlay) and the viewer's own picks
+  // (for the upcoming-match summaries) are independent — fetch in parallel.
+  const [{ standings, livePredictions }, userPredictions] = await Promise.all([
+    loadLeagueStandings({
+      leagueId,
+      members,
+      matches,
+      leaguePool: league.settings.boosters.pool,
+      currentUserId: userId,
+    }),
+    fetchUserPredictionsForLeague(leagueId, userId),
+  ])
   const userRow = standings.find((r) => r.profile.id === userId)
   const profileById = new Map(members.map((m) => [m.userId, m.profile]))
 
@@ -255,7 +391,7 @@ async function buildLeagueDashboardSummary(
     .map((match) =>
       liveMatchSummary({
         match,
-        predictions: predictions.filter((p) => p.matchId === match.id),
+        predictions: livePredictions.filter((p) => p.matchId === match.id),
         userId,
         profileById,
         memberCount: members.length,
@@ -269,9 +405,7 @@ async function buildLeagueDashboardSummary(
       upcomingMatchSummary({
         match,
         userPrediction:
-          predictions.find(
-            (p) => p.matchId === match.id && p.userId === userId,
-          ) ?? null,
+          userPredictions.find((p) => p.matchId === match.id) ?? null,
       }),
     )
 
@@ -322,12 +456,13 @@ export async function getMyLeagues(): Promise<MyLeaguesPayload> {
 
     const { league, members } = await fetchLeagueWithCounts(leagueRow.id)
     const matches = await fetchMatchesForLeague(leagueRow.id)
-    const predictions = await fetchPredictionsForLeague(leagueRow.id)
 
-    const standings = computeStandings({
+    // My-leagues only needs the viewer's own row — no per-match summaries — so
+    // just the aggregated standings + live overlay, no full prediction pull.
+    const { standings } = await loadLeagueStandings({
+      leagueId: leagueRow.id,
       members,
       matches,
-      predictions,
       leaguePool: league.settings.boosters.pool,
       currentUserId: userId,
     })
@@ -375,31 +510,6 @@ export async function getMyLeagues(): Promise<MyLeaguesPayload> {
 
 // ── League detail ───────────────────────────────────────────────────────────
 
-// Map of profile.id → standings position computed from finished matches
-// only (live matches excluded). Passed to computeStandings as the
-// `beforeSnapshot` so the ▲/▼ movement column reflects how live results
-// are currently shifting positions. Returns undefined when nothing is
-// live (no movement to show, avoids a redundant pass).
-function positionSnapshotBeforeLive(
-  members: LeagueMember[],
-  matches: Match[],
-  predictions: Prediction[],
-  leaguePool: BoosterCounts,
-): Record<UUID, number> | undefined {
-  const hasLive = matches.some((m) => m.status === 'live')
-  if (!hasLive) return undefined
-
-  const before = computeStandings({
-    members,
-    matches: matches.filter((m) => m.status !== 'live'),
-    predictions,
-    leaguePool,
-  })
-  const snapshot: Record<UUID, number> = {}
-  for (const row of before) snapshot[row.profile.id] = row.position
-  return snapshot
-}
-
 export async function getLeagueDetail(
   leagueId: UUID,
 ): Promise<LeagueDetailPayload> {
@@ -407,21 +517,21 @@ export async function getLeagueDetail(
 
   const { league, members } = await fetchLeagueWithCounts(leagueId)
   const matches = await fetchMatchesForLeague(leagueId)
-  const predictions = await fetchPredictionsForLeague(leagueId)
 
-  const standings = computeStandings({
-    members,
-    matches,
-    predictions,
-    leaguePool: league.settings.boosters.pool,
-    currentUserId: userId,
-    beforeSnapshot: positionSnapshotBeforeLive(
+  // Standings (server-aggregated + live overlay; withPositionChange drives the
+  // ▲/▼ column) and the viewer's own picks (for the upcoming + completed
+  // summaries, which render only the viewer's row) are independent.
+  const [{ standings, livePredictions }, userPredictions] = await Promise.all([
+    loadLeagueStandings({
+      leagueId,
       members,
       matches,
-      predictions,
-      league.settings.boosters.pool,
-    ),
-  })
+      leaguePool: league.settings.boosters.pool,
+      currentUserId: userId,
+      withPositionChange: true,
+    }),
+    fetchUserPredictionsForLeague(leagueId, userId),
+  ])
   const profileById = new Map(members.map((m) => [m.userId, m.profile]))
 
   const live = matches
@@ -446,7 +556,7 @@ export async function getLeagueDetail(
     liveMatches: live.map((match) =>
       liveMatchSummary({
         match,
-        predictions: predictions.filter((p) => p.matchId === match.id),
+        predictions: livePredictions.filter((p) => p.matchId === match.id),
         userId,
         profileById,
         memberCount: members.length,
@@ -456,15 +566,16 @@ export async function getLeagueDetail(
       upcomingMatchSummary({
         match,
         userPrediction:
-          predictions.find(
-            (p) => p.matchId === match.id && p.userId === userId,
-          ) ?? null,
+          userPredictions.find((p) => p.matchId === match.id) ?? null,
       }),
     ),
+    // completedMatchSummary renders only the viewer's own result, and a
+    // finished pick's points come from its persisted `points` row (no peer
+    // recompute), so the viewer's own predictions are all this needs.
     completedMatches: finished.map((match) =>
       completedMatchSummary({
         match,
-        predictions: predictions.filter((p) => p.matchId === match.id),
+        predictions: userPredictions.filter((p) => p.matchId === match.id),
         userId,
         profileById,
         memberCount: members.length,
@@ -505,21 +616,18 @@ export async function getMatchDetail(
     rowToPrediction(row as Parameters<typeof rowToPrediction>[0]),
   )
 
-  // For the standings tab, we need league-wide context.
+  // For the standings tab, we need league-wide context — aggregated
+  // server-side plus the live overlay (withPositionChange drives the ▲/▼
+  // column). The per-match predictions above stay the source for this match's
+  // board; the live overlay independently covers all live matches.
   const allLeagueMatches = await fetchMatchesForLeague(leagueId)
-  const allLeaguePredictions = await fetchPredictionsForLeague(leagueId)
-  const standings = computeStandings({
+  const { standings } = await loadLeagueStandings({
+    leagueId,
     members,
     matches: allLeagueMatches,
-    predictions: allLeaguePredictions,
     leaguePool: league.settings.boosters.pool,
     currentUserId: userId,
-    beforeSnapshot: positionSnapshotBeforeLive(
-      members,
-      allLeagueMatches,
-      allLeaguePredictions,
-      league.settings.boosters.pool,
-    ),
+    withPositionChange: true,
   })
 
   const memberCount = members.length
@@ -552,8 +660,8 @@ export async function getMatchDetail(
  * single-league when given. Paginated by a kickoff_time cursor for load-more.
  *
  * Batched to avoid N+1: leagues + rosters up front, finished matches via the
- * league-matches chokepoint, then ALL predictions for the windowed matches in
- * one query. Feed items (overview + standout moments) are assembled in pure TS.
+ * league-matches chokepoint, then all predictions for the windowed matches in
+ * one paginated query. Feed items (overview + standouts) are assembled in TS.
  */
 export async function getRecentMoments(args: {
   leagueId?: UUID
@@ -636,18 +744,26 @@ export async function getRecentMoments(args: {
   // don't starve the page. We slice to `limit` after assembly.
   const window = finished.slice(0, limit * 3)
 
-  // 3. All predictions for the windowed (match,league) pairs in ONE query.
+  // 3. All predictions for the windowed (match,league) pairs. Paginated: a
+  //    wide window across a many-member league can exceed the 1000-row cap.
   const matchIds = [...new Set(window.map((t) => t.match.id))]
   const leagueIds = [...new Set(window.map((t) => t.leagueId))]
-  const { data: predRows, error: pErr } = await supabase
-    .from('predictions')
-    .select(PREDICTION_SELECT)
-    .in('match_id', matchIds)
-    .in('league_id', leagueIds)
-  if (pErr) throw pErr
+  const predRows = await fetchAllPages<PredictionRow>(
+    (from, to) =>
+      supabase
+        .from('predictions')
+        .select(PREDICTION_SELECT)
+        .in('match_id', matchIds)
+        .in('league_id', leagueIds)
+        .order('id', { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: PredictionRow[] | null
+        error: unknown
+      }>,
+  )
   const predsByKey = new Map<string, Prediction[]>()
-  for (const row of predRows ?? []) {
-    const p = rowToPrediction(row as Parameters<typeof rowToPrediction>[0])
+  for (const row of predRows) {
+    const p = rowToPrediction(row)
     const key = `${p.matchId}::${p.leagueId}`
     const arr = predsByKey.get(key) ?? []
     arr.push(p)
@@ -746,15 +862,26 @@ export async function getPredictionContext(
     // match the user is editing on is in the league, so this almost
     // always lets the context through (the cup-final case included).
     if (isLeagueFinished(matches)) continue
-    const predictions = await fetchPredictionsForLeague(leagueRow.id)
 
-    const standings = computeStandings({
-      members,
-      matches,
-      predictions,
-      leaguePool: league.settings.boosters.pool,
-      currentUserId: userId,
-    })
+    // Standings (aggregated + live overlay) and the viewer's existing pick for
+    // this one match are independent — fetch in parallel.
+    const [{ standings }, { data: cpRow, error: cpErr }] = await Promise.all([
+      loadLeagueStandings({
+        leagueId: leagueRow.id,
+        members,
+        matches,
+        leaguePool: league.settings.boosters.pool,
+        currentUserId: userId,
+      }),
+      supabase
+        .from('predictions')
+        .select(PREDICTION_SELECT)
+        .eq('match_id', matchId)
+        .eq('league_id', leagueRow.id)
+        .eq('user_id', userId)
+        .maybeSingle(),
+    ])
+    if (cpErr) throw cpErr
     const userRow = standings.find((r) => r.profile.id === userId)
     const leader = standings[0]
     const leaderGap =
@@ -762,10 +889,9 @@ export async function getPredictionContext(
         ? leader.totalPoints + leader.matchdayPoints
           - (userRow.totalPoints + userRow.matchdayPoints)
         : 0
-    const currentPrediction =
-      predictions.find(
-        (p) => p.matchId === matchId && p.userId === userId,
-      ) ?? null
+    const currentPrediction = cpRow
+      ? rowToPrediction(cpRow as PredictionRow)
+      : null
 
     contexts.push({
       leagueId: league.id,
@@ -1057,6 +1183,6 @@ export async function signOut(): Promise<void> {
   if (error) throw error
 }
 
-// Re-export StandingRow so callers can introspect what computeStandings
-// returns without crossing module boundaries.
+// Re-export StandingRow so callers can introspect what the standings helpers
+// return without crossing module boundaries.
 export type { StandingRow }
