@@ -147,6 +147,31 @@ Or from the SQL editor:
 select public.dispatch_sync_fixtures('WC');
 ```
 
+## 4b. Adding another competition
+
+Three steps, all in one migration — `00026_add_croatian_hnl.sql` is the
+template:
+
+1. Confirm football-data.org serves it on your plan and note its `code`,
+   `id` and `currentSeason` dates:
+
+   ```bash
+   curl -H "X-Auth-Token: $FOOTBALL_DATA_API_KEY" https://api.football-data.org/v4/competitions
+   ```
+
+2. Insert the `competitions` row (our `code` must equal the API code — both
+   sync functions look the row up by it) and add two `cron.schedule` calls:
+   30s smart-gated live polling, plus the daily fixture refresh on the next
+   free 5-minute slot after 03:00 UTC.
+3. After `supabase db push`, run the first import once:
+
+   ```sql
+   select public.dispatch_sync_fixtures('<CODE>');
+   ```
+
+Nothing in the app needs changing: the league-creation picker lists every
+competition whose `season_end` is today or later.
+
 ## 5. Run the app
 
 ```bash
