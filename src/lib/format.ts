@@ -1,6 +1,6 @@
 // UI formatting helpers. Pure — no React. Tested implicitly via screens.
 
-import type { ISODateTime, MatchStatus } from '@/types'
+import type { ISODate, ISODateTime, MatchStatus } from '@/types'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -176,4 +176,29 @@ export function displayLiveMinute(
   const matchMinute = Math.floor(elapsed - SECOND_HALF_OFFSET)
   if (matchMinute <= 90) return `${matchMinute}'`
   return `90+${matchMinute - 90}'`
+}
+
+// Season label derived from a competition's season window. The DB stores
+// the stable name only ("Premier League", migration 00027); the season is a
+// property of season_start / season_end that rolls forward automatically
+// (roll_competition_season), so the UI derives it instead of trusting a
+// suffix that would go stale.
+//   2026-08-01 → 2027-05-22  → "2026/27"   (cross-year league season)
+//   2026-06-11 → 2026-07-19  → "2026"      (one-off tournament)
+export function seasonLabel(seasonStart: ISODate, seasonEnd: ISODate): string {
+  const startYear = seasonStart.slice(0, 4)
+  const endYear = seasonEnd.slice(0, 4)
+  if (startYear === endYear) return startYear
+  return `${startYear}/${endYear.slice(2)}`
+}
+
+// The label to show next to a competition's name, or null when the name
+// already carries it ("FIFA World Cup 2026" → no "· 2026" echo).
+export function competitionSeasonLabel(c: {
+  name: string
+  seasonStart: ISODate
+  seasonEnd: ISODate
+}): string | null {
+  const label = seasonLabel(c.seasonStart, c.seasonEnd)
+  return c.name.endsWith(label) ? null : label
 }

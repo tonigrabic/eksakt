@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Trophy, Copy, Check, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { competitionSeasonLabel } from '@/lib/format'
 import { useCompetitions } from '@/hooks/use-competitions'
 import { useCreateLeague } from '@/hooks/use-create-league'
 import {
@@ -326,6 +327,7 @@ function CompetitionPicker({
     <div className="rounded-lg border border-border bg-background divide-y divide-border/40 overflow-hidden">
       {competitions.map((c) => {
         const checked = selectedIds.includes(c.id)
+        const season = competitionSeasonLabel(c)
         return (
           <button
             key={c.id}
@@ -355,7 +357,9 @@ function CompetitionPicker({
               <div className="font-medium text-foreground truncate">
                 {c.name}
               </div>
-              <div className="text-xs text-muted-foreground">{c.code}</div>
+              <div className="text-xs text-muted-foreground">
+                {season ? `${c.code} · ${season}` : c.code}
+              </div>
             </div>
           </button>
         )
