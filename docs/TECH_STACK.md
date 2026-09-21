@@ -68,7 +68,7 @@ Only use `"use client"` for interactive elements (prediction inputs, live score 
 
 ### football-data.org API
 - Competition code for World Cup: `WC` (id: 2000)
-- Free tier covers: World Cup, Champions League, Premier League, La Liga, Bundesliga, Serie A, Ligue 1, Eredivisie, Primeira Liga, Championship, Brazilian Serie A, Euros
+- Free tier covers: World Cup, Champions League, Premier League, La Liga, Bundesliga, Serie A, Ligue 1, Eredivisie, Primeira Liga, Championship, Brazilian Serie A, Euros, Croatian HNL (`PRVA`, added to the API in 2026)
 - Livescores plan: €12/mo, 20 requests/min, live scores
 - API key stored in environment variable: `FOOTBALL_DATA_API_KEY`
 - Base URL: `https://api.football-data.org/v4`
