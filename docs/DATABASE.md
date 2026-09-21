@@ -39,7 +39,7 @@ Football teams / national squads.
 | Column | Type | Notes |
 |--------|------|-------|
 | id | uuid | PK |
-| name | text | NOT NULL — "FIFA World Cup 2026" |
+| name | text | NOT NULL — stable name without season suffix, "Premier League" (00027); one-off tournaments keep their year, "FIFA World Cup 2026". Season is derived from `season_start`/`season_end` |
 | code | text | NOT NULL UNIQUE — "WC" (matches football-data.org) |
 | type | text | NOT NULL CHECK in (`'CUP'`, `'LEAGUE'`) |
 | emblem_url | text | nullable |

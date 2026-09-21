@@ -25,6 +25,7 @@ import {
   UserMinus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { competitionSeasonLabel } from '@/lib/format'
 import { useLeagueDetail } from '@/hooks/use-league-detail'
 import { useCompetitions } from '@/hooks/use-competitions'
 import { useAddLeagueCompetition } from '@/hooks/use-add-league-competition'
@@ -581,6 +582,7 @@ function CompetitionPickRow({
   checked: boolean
   onPick: () => void
 }) {
+  const season = competitionSeasonLabel(competition)
   return (
     <button
       type="button"
@@ -609,7 +611,9 @@ function CompetitionPickRow({
         <div className="font-medium text-foreground truncate">
           {competition.name}
         </div>
-        <div className="text-xs text-muted-foreground">{competition.code}</div>
+        <div className="text-xs text-muted-foreground">
+          {season ? `${competition.code} · ${season}` : competition.code}
+        </div>
       </div>
     </button>
   )

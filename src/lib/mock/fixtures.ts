@@ -108,7 +108,7 @@ export const competitions: Record<UUID, Competition> = {
   },
   'comp-pl': {
     id: 'comp-pl',
-    name: 'Premier League 2025/26',
+    name: 'Premier League',
     code: 'PL',
     type: 'LEAGUE',
     emblemUrl: null,
@@ -117,7 +117,7 @@ export const competitions: Record<UUID, Competition> = {
   },
   'comp-cl': {
     id: 'comp-cl',
-    name: 'Champions League 2025/26',
+    name: 'Champions League',
     code: 'CL',
     type: 'CUP',
     emblemUrl: null,
